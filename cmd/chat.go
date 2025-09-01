@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/rana/ask/internal/bedrock"
+	"github.com/rana/ask/internal/config"
 	"github.com/rana/ask/internal/expand"
 	"github.com/rana/ask/internal/session"
 )
@@ -14,6 +15,13 @@ type ChatCmd struct{}
 
 // Run executes the chat command
 func (c *ChatCmd) Run() error {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		// Continue with defaults if config fails
+		fmt.Printf("Warning: using default configuration: %v\n", err)
+	}
+
 	// Check if session.md exists
 	content, err := os.ReadFile("session.md")
 	if err != nil {
@@ -47,7 +55,17 @@ func (c *ChatCmd) Run() error {
 	}
 
 	humanTokens := countTokensApprox(expanded)
-	fmt.Printf("Human turn: %d tokens\n\n", humanTokens)
+	fmt.Printf("Human turn: %d tokens\n", humanTokens)
+
+	// Show model being used
+	if cfg != nil {
+		modelID, _ := cfg.ResolveModel()
+		fmt.Printf("Model: %s\n", modelID)
+		if cfg.Thinking.Enabled {
+			fmt.Printf("Thinking: enabled (budget: %d tokens)\n", cfg.GetThinkingTokens())
+		}
+	}
+	fmt.Println()
 
 	// Send to Bedrock
 	fmt.Println("Sending to Claude...")
