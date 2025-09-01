@@ -9,8 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 )
 
-// SendToClaudeV3 sends content to Claude 3 Opus via AWS Bedrock
-func SendToClaudeV3(content string) (string, error) {
+// SendToClaude sends content to Claude via AWS Bedrock
+func SendToClaude(content string) (string, error) {
 	// Load AWS configuration
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -40,7 +40,7 @@ func SendToClaudeV3(content string) (string, error) {
 
 	// Send to Bedrock
 	input := &bedrockruntime.InvokeModelInput{
-		ModelId:     stringPtr("anthropic.claude-3-opus-20240229-v1:0"),
+		ModelId:     stringPtr("us.anthropic.claude-opus-4-1-20250805-v1:0"),
 		ContentType: stringPtr("application/json"),
 		Body:        requestJSON,
 	}

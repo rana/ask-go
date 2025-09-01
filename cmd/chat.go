@@ -51,7 +51,7 @@ func (c *ChatCmd) Run() error {
 
 	// Send to Bedrock
 	fmt.Println("Sending to Claude...")
-	response, err := bedrock.SendToClaudeV3(expanded)
+	response, err := bedrock.SendToClaude(expanded)
 	if err != nil {
 		return fmt.Errorf("failed to send to Claude: %w", err)
 	}
