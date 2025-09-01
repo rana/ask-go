@@ -50,7 +50,7 @@ func ExpandReferences(content string, turnNumber int) (string, []FileStat, error
 
 		// Create the expanded section
 		baseName := filepath.Base(fileName)
-		section := fmt.Sprintf("### [%d.%d] %s\n```markdown\n%s\n```",
+		section := fmt.Sprintf("## [%d.%d] %s\n```markdown\n%s\n```",
 			turnNumber, sectionNumber, baseName, string(fileContent))
 
 		// Replace the reference with the expanded section

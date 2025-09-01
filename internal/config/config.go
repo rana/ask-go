@@ -16,6 +16,7 @@ type Config struct {
 	Temperature float64                `toml:"temperature"`
 	MaxTokens   int                    `toml:"max_tokens"`
 	Timeout     string                 `toml:"timeout"`
+	Context     string                 `toml:"context"`
 	Thinking    Thinking               `toml:"thinking"`
 	Bedrock     map[string]interface{} `toml:"bedrock,omitempty"`
 }
@@ -34,6 +35,7 @@ func Defaults() *Config {
 		Temperature: 1.0,
 		MaxTokens:   32000,
 		Timeout:     "5m",
+		Context:     "standard",
 		Thinking: Thinking{
 			Enabled: false,
 			Budget:  0.8,
@@ -133,4 +135,8 @@ func (c *Config) GetThinkingTokens() int {
 // ResolveModel returns the full model ID, resolving shortcuts like "opus"
 func (c *Config) ResolveModel() (string, error) {
 	return SelectModel(c.Model)
+}
+
+func (c *Config) Uses1MContext() bool {
+	return c.Context == "1m"
 }

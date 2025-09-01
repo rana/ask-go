@@ -17,7 +17,7 @@ func WriteAtomic(path string, content []byte) error {
 
 // ReplaceLastHumanTurn replaces the last human turn with expanded content
 func ReplaceLastHumanTurn(content string, turnNumber int, expanded string) string {
-	header := fmt.Sprintf("## [%d] Human", turnNumber)
+	header := fmt.Sprintf("# [%d] Human", turnNumber)
 
 	// Find the header position
 	headerPos := strings.LastIndex(content, header)
@@ -27,7 +27,7 @@ func ReplaceLastHumanTurn(content string, turnNumber int, expanded string) strin
 
 	// Find the next header (if any)
 	afterHeader := content[headerPos+len(header):]
-	nextHeaderPos := strings.Index(afterHeader, "\n## [")
+	nextHeaderPos := strings.Index(afterHeader, "\n# [")
 
 	var result string
 	if nextHeaderPos == -1 {
@@ -44,6 +44,6 @@ func ReplaceLastHumanTurn(content string, turnNumber int, expanded string) strin
 
 // AppendAIResponse appends an AI response to the session
 func AppendAIResponse(content string, turnNumber int, response string) string {
-	aiSection := fmt.Sprintf("\n## [%d] AI\n\n````markdown\n%s\n````\n", turnNumber, strings.TrimSpace(response))
+	aiSection := fmt.Sprintf("\n# [%d] AI\n\n````markdown\n%s\n````\n", turnNumber, strings.TrimSpace(response))
 	return content + aiSection
 }

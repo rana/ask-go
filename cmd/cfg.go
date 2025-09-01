@@ -17,6 +17,7 @@ type CfgCmd struct {
 	Timeout        CfgTimeoutCmd        `cmd:"" help:"Set timeout duration"`
 	Thinking       CfgThinkingCmd       `cmd:"" help:"Enable/disable thinking mode"`
 	ThinkingBudget CfgThinkingBudgetCmd `cmd:"" help:"Set thinking budget (0.0-1.0)"`
+	Context        CfgContextCmd        `cmd:"" help:"Set context window size"`
 }
 
 // Run shows current configuration
@@ -238,4 +239,56 @@ func (c *CfgThinkingBudgetCmd) Run() error {
 		budget*100,
 		int(float64(cfg.MaxTokens)*budget))
 	return nil
+}
+
+type CfgContextCmd struct {
+	Size string `arg:"" optional:"" help:"Context size: standard or 1m"`
+}
+
+func (c *CfgContextCmd) Run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Show current setting if no argument
+	if c.Size == "" {
+		currentSize := "standard"
+		if cfg.Context == "1m" {
+			currentSize = "1m (1 million tokens)"
+		}
+		fmt.Printf("Context window preference: %s\n", currentSize)
+
+		// Show model-specific reality
+		if cfg.Model == "sonnet" || cfg.Model == "sonnet-4" {
+			fmt.Println("\nSonnet 4 status:")
+			fmt.Println("  - Uses AWS system profiles only")
+			fmt.Println("  - 1M context requires AWS to provide it")
+			fmt.Println("  - Cannot create custom profiles")
+		} else if cfg.Model == "opus" {
+			fmt.Println("\nOpus status:")
+			fmt.Println("  - Supports custom profiles")
+			fmt.Println("  - Standard context (200k tokens)")
+		}
+
+		return nil
+	}
+
+	// Validate and set new size
+	switch strings.ToLower(c.Size) {
+	case "standard", "200k", "default":
+		cfg.Context = "standard"
+		fmt.Println("Context preference set to: standard")
+	case "1m", "1million", "million":
+		cfg.Context = "1m"
+		fmt.Println("Context preference set to: 1m")
+		fmt.Println("\nNote: 1M context availability depends on:")
+		fmt.Println("  - Your AWS tier (requires tier 4)")
+		fmt.Println("  - Model support (Sonnet 4 only)")
+		fmt.Println("  - AWS providing appropriate system profiles")
+	default:
+		return fmt.Errorf("invalid context size. Use 'standard' or '1m'")
+	}
+
+	return cfg.Save()
 }

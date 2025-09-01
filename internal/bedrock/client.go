@@ -3,6 +3,7 @@ package bedrock
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -24,6 +25,12 @@ func SendToClaude(content string) (string, error) {
 	modelID, err := cfg.ResolveModel()
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve model: %w", err)
+	}
+
+	// Ensure profile exists and get capabilities
+	profileArn, capabilities, err := ensureProfile(modelID)
+	if err != nil {
+		return "", fmt.Errorf("failed to setup model: %w", err)
 	}
 
 	// Parse timeout
@@ -55,7 +62,7 @@ func SendToClaude(content string) (string, error) {
 		},
 	}
 
-	// Build inference configuration
+	// Build standard inference configuration
 	inferenceConfig := &types.InferenceConfiguration{
 		Temperature: aws.Float32(float32(cfg.Temperature)),
 		MaxTokens:   aws.Int32(int32(cfg.MaxTokens)),
@@ -63,34 +70,68 @@ func SendToClaude(content string) (string, error) {
 
 	// Build the request
 	input := &bedrockruntime.ConverseInput{
-		ModelId:         aws.String(modelID),
+		ModelId:         aws.String(profileArn),
 		Messages:        []types.Message{userMessage},
 		InferenceConfig: inferenceConfig,
 	}
 
-	// Build additional model fields if needed
-	additionalFields := make(map[string]interface{})
+	// Only add additional fields for non-system profiles OR when we created a custom profile
+	isCustomProfile := !capabilities.RequiresSystemProfile ||
+		(cfg.Uses1MContext() && strings.Contains(strings.ToLower(modelID), "sonnet-4"))
 
-	// Add thinking configuration if enabled
-	if cfg.Thinking.Enabled {
-		thinkingTokens := cfg.GetThinkingTokens()
-		additionalFields["max_thinking_tokens"] = thinkingTokens
-	}
+	if isCustomProfile {
+		additionalFields := make(map[string]interface{})
 
-	// Add any additional Bedrock parameters from config
-	for key, value := range cfg.Bedrock {
-		additionalFields[key] = value
-	}
+		// Add thinking configuration if enabled and supported
+		if cfg.Thinking.Enabled && capabilities.SupportsThinking {
+			additionalFields["thinking"] = map[string]interface{}{
+				"type":          "enabled",
+				"budget_tokens": cfg.GetThinkingTokens(),
+			}
+		}
 
-	// Only set AdditionalModelRequestFields if we have fields to add
-	if len(additionalFields) > 0 {
-		docMarshaler := document.NewLazyDocument(additionalFields)
-		input.AdditionalModelRequestFields = docMarshaler
+		// Add 1M context beta header for Sonnet 4
+		if cfg.Uses1MContext() && strings.Contains(strings.ToLower(modelID), "sonnet-4") {
+			additionalFields["anthropic-beta"] = "context-1m-2025-08-07"
+			// Note: might also need to add this as a header, not just in additional fields
+			// The exact mechanism depends on AWS Bedrock's implementation
+		}
+
+		// Add any other Bedrock parameters from config
+		// Skip 'thinking' and 'enable_1m_context' since we handle them above
+		for key, value := range cfg.Bedrock {
+			if key != "thinking" && key != "enable_1m_context" {
+				additionalFields[key] = value
+			}
+		}
+
+		// Only set AdditionalModelRequestFields if we have fields to add
+		if len(additionalFields) > 0 {
+			docMarshaler := document.NewLazyDocument(additionalFields)
+			input.AdditionalModelRequestFields = docMarshaler
+		}
+	} else if cfg.Thinking.Enabled {
+		// Warn user that thinking won't work with system profiles
+		fmt.Println("Note: Thinking mode is not available with system profiles")
 	}
 
 	// Send to Bedrock
 	result, err := client.Converse(ctx, input)
 	if err != nil {
+		// Provide helpful error messages
+		errStr := err.Error()
+		if strings.Contains(errStr, "Extra inputs") {
+			return "", fmt.Errorf("this model doesn't support the configured features. Try disabling thinking: ask cfg thinking off")
+		}
+		if strings.Contains(errStr, "thinking") || strings.Contains(errStr, "budget_tokens") {
+			return "", fmt.Errorf("thinking configuration error. Try disabling with: ask cfg thinking off\nError: %w", err)
+		}
+		if strings.Contains(errStr, "inference profile") {
+			return "", fmt.Errorf("model requires additional setup. Try: ask cfg model opus")
+		}
+		if strings.Contains(errStr, "context-1m") {
+			return "", fmt.Errorf("1M context window requires tier 4 access. Remove 'enable_1m_context' from config")
+		}
 		return "", fmt.Errorf("failed to invoke Claude: %w", err)
 	}
 
@@ -102,8 +143,11 @@ func SendToClaude(content string) (string, error) {
 	switch v := result.Output.(type) {
 	case *types.ConverseOutputMemberMessage:
 		if len(v.Value.Content) > 0 {
-			if textBlock, ok := v.Value.Content[0].(*types.ContentBlockMemberText); ok {
-				return textBlock.Value, nil
+			// Look for text content (main response)
+			for _, content := range v.Value.Content {
+				if textBlock, ok := content.(*types.ContentBlockMemberText); ok {
+					return textBlock.Value, nil
+				}
 			}
 		}
 	}

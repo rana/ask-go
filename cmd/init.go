@@ -18,7 +18,7 @@ func (c *InitCmd) Run() error {
 	}
 
 	// Create initial session content
-	content := "## [1] Human\n\n"
+	content := "# [1] Human\n\n"
 
 	// Write session.md
 	if err := session.WriteAtomic("session.md", []byte(content)); err != nil {
