@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -14,7 +15,10 @@ import (
 type ChatCmd struct{}
 
 // Run executes the chat command
-func (c *ChatCmd) Run() error {
+func (c *ChatCmd) Run(cmdCtx *Context) error {
+	// Use the context from main that has signal handling
+	ctx := cmdCtx.Context
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -92,13 +96,13 @@ func (c *ChatCmd) Run() error {
 	}
 
 	// Calculate token statistics
-	totalTokens := 0
+	totalInputTokens := 0
 	for _, turn := range turns {
 		tokens := countTokensApprox(turn.Content)
-		totalTokens += tokens
+		totalInputTokens += tokens
 		fmt.Printf("%s turn %d: %d tokens\n", turn.Role, turn.Number, tokens)
 	}
-	fmt.Printf("Total input: %d tokens\n", totalTokens)
+	fmt.Printf("Total input: %d tokens\n", totalInputTokens)
 
 	// Show model being used
 	if cfg != nil {
@@ -110,28 +114,59 @@ func (c *ChatCmd) Run() error {
 	}
 	fmt.Println()
 
-	// Send full conversation history to Bedrock
-	fmt.Println("Sending conversation to Claude...")
-	response, err := bedrock.SendToClaudeWithHistory(turns)
-	if err != nil {
-		return fmt.Errorf("failed to send to Claude: %w", err)
+	// Write expanded content if we had expansions
+	if totalExpansions > 0 {
+		if err := session.WriteAtomic("session.md", []byte(updatedContent)); err != nil {
+			return fmt.Errorf("failed to update session.md: %w", err)
+		}
 	}
-
-	aiTokens := countTokensApprox(response)
-	fmt.Printf("\nAI response: %d tokens\n", aiTokens)
 
 	// Calculate next turn number
 	nextTurnNumber := turns[len(turns)-1].Number + 1
 
-	// Append AI response to session
-	updatedContent = session.AppendAIResponse(updatedContent, nextTurnNumber, response)
+	// Stream the response
+	fmt.Println("Streaming response... [ctrl+c to interrupt]")
 
-	// Write updated session atomically
-	if err := session.WriteAtomic("session.md", []byte(updatedContent)); err != nil {
-		return fmt.Errorf("failed to update session.md: %w", err)
+	var finalTokenCount int
+	err = session.StreamResponse("session.md", nextTurnNumber, func(writer *session.StreamWriter) (int, error) {
+		// Progress indicator in terminal
+		lastPrintedTokens := 0
+
+		tokenCount, err := bedrock.StreamToClaudeWithHistory(ctx, turns, func(chunk string, currentTokens int) error {
+			// Write chunk to file
+			if err := writer.WriteChunk(chunk); err != nil {
+				return err
+			}
+
+			// Update terminal progress (print every 100 tokens)
+			if currentTokens-lastPrintedTokens >= 100 || currentTokens < 100 {
+				fmt.Printf("\rStreaming response... %d tokens [ctrl+c to interrupt]", currentTokens)
+				lastPrintedTokens = currentTokens
+			}
+
+			return nil
+		})
+
+		finalTokenCount = tokenCount
+		return tokenCount, err
+	})
+
+	// Clear the streaming line
+	fmt.Print("\r                                                           \r")
+
+	if err != nil {
+		if err == context.Canceled {
+			fmt.Printf("Response interrupted after %d tokens\n", finalTokenCount)
+		} else {
+			return fmt.Errorf("streaming failed: %w", err)
+		}
+	} else {
+		fmt.Printf("Response complete: %d tokens\n", finalTokenCount)
 	}
 
-	totalSessionTokens := countTokensApprox(updatedContent)
+	// Show final session size
+	finalContent, _ := os.ReadFile("session.md")
+	totalSessionTokens := countTokensApprox(string(finalContent))
 	fmt.Printf("Total session: %d tokens\n", totalSessionTokens)
 
 	return nil

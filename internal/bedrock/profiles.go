@@ -196,6 +196,20 @@ func discoverSystemProfile(ctx context.Context, client *bedrock.Client, modelID 
 	var standardProfile string
 	var extendedProfile string
 
+	// Extract model type from modelID for flexible matching
+	// e.g., "us.anthropic.claude-3-5-sonnet-20241022-v2:0" -> "sonnet"
+	// e.g., "anthropic.claude-3-opus-20240229-v1:0" -> "opus"
+	modelLower := strings.ToLower(modelID)
+	var modelType string
+	switch {
+	case strings.Contains(modelLower, "sonnet"):
+		modelType = "sonnet"
+	case strings.Contains(modelLower, "opus"):
+		modelType = "opus"
+	case strings.Contains(modelLower, "haiku"):
+		modelType = "haiku"
+	}
+
 	// Look for profiles that support this model
 	for _, profile := range result.InferenceProfileSummaries {
 		if profile.InferenceProfileArn == nil {
@@ -208,31 +222,43 @@ func discoverSystemProfile(ctx context.Context, client *bedrock.Client, modelID 
 			profileName = *profile.InferenceProfileName
 		}
 
-		// Check if this profile supports our model
+		// Check if this profile supports our specific model
 		supportsModel := false
+
+		// First, check explicit model support
 		if profile.Models != nil {
 			for _, model := range profile.Models {
-				if model.ModelArn != nil && strings.Contains(*model.ModelArn, "sonnet-4") {
-					supportsModel = true
-					break
+				if model.ModelArn != nil {
+					modelArnStr := *model.ModelArn
+					// Check if the profile's model ARN contains our model ID or type
+					if strings.Contains(modelArnStr, modelID) ||
+						(modelType != "" && strings.Contains(strings.ToLower(modelArnStr), modelType)) {
+						supportsModel = true
+						break
+					}
 				}
 			}
 		}
 
-		// Also check by name patterns
-		if !supportsModel {
-			if strings.Contains(profileName, "sonnet") ||
-				strings.Contains(profileName, "Sonnet") ||
-				strings.Contains(profileName, "cross-region") {
+		// Also check by profile name patterns if model type is known
+		if !supportsModel && modelType != "" {
+			profileNameLower := strings.ToLower(profileName)
+			// Check if profile name indicates it's for our model type
+			if strings.Contains(profileNameLower, modelType) ||
+				(strings.Contains(profileNameLower, "cross-region") &&
+					strings.Contains(profileNameLower, "inference")) {
+				// Cross-region inference profiles might support multiple models
 				supportsModel = true
 			}
 		}
 
 		if supportsModel {
 			// Check if it's a 1M context profile
-			if strings.Contains(profileName, "1m") ||
-				strings.Contains(profileName, "1M") ||
-				strings.Contains(profileName, "million") {
+			profileNameLower := strings.ToLower(profileName)
+			if strings.Contains(profileNameLower, "1m") ||
+				strings.Contains(profileNameLower, "1M") ||
+				strings.Contains(profileNameLower, "million") ||
+				strings.Contains(profileNameLower, "extended") {
 				extendedProfile = profileArn
 			} else {
 				standardProfile = profileArn
@@ -247,22 +273,30 @@ func discoverSystemProfile(ctx context.Context, client *bedrock.Client, modelID 
 	}
 
 	if standardProfile != "" {
-		if prefer1M {
+		if prefer1M && extendedProfile == "" {
 			fmt.Printf("Note: 1M context profile not found, using standard profile\n")
 		}
 		return standardProfile, nil
 	}
 
-	return "", fmt.Errorf(`no suitable system profile found for Sonnet 4.
+	// Provide model-specific error message
+	modelDesc := modelType
+	if modelDesc == "" {
+		modelDesc = "model"
+	}
+
+	return "", fmt.Errorf(`no suitable system profile found for %s (%s).
 
 This model requires a system-provided inference profile.
 Your AWS account may need:
 1. Cross-region inference enabled
-2. Access to Sonnet 4 profiles
+2. Access to %s profiles
+3. Appropriate AWS tier for this model
 
 Contact your AWS administrator or try:
   ask cfg model opus     # Claude Opus (supports custom profiles)
-  ask cfg model sonnet   # Claude 3.5 Sonnet (older version)`)
+  ask cfg model haiku    # Claude Haiku (may support custom profiles)`,
+		modelDesc, modelID, modelDesc)
 }
 
 // createInferenceProfile creates a new inference profile
