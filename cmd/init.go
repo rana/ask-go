@@ -11,7 +11,7 @@ import (
 type InitCmd struct{}
 
 // Run executes the init command
-func (c *InitCmd) Run() error {
+func (c *InitCmd) Run(cmdCtx *Context) error {
 	// Check if session.md already exists
 	if _, err := os.Stat("session.md"); err == nil {
 		return fmt.Errorf("session.md already exists. Delete it to start fresh")

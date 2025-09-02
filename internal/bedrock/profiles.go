@@ -15,9 +15,8 @@ import (
 
 // ModelCapabilities describes what a model supports
 type ModelCapabilities struct {
-	SupportsThinking      bool
-	RequiresSystemProfile bool
-	ProfileStrategy       string // "create" or "discover"
+	SupportsThinking bool
+	UseSystemProfile bool // True for models that require AWS-provided profiles
 }
 
 // getModelCapabilities returns capabilities for a model
@@ -26,41 +25,142 @@ func getModelCapabilities(modelID string) ModelCapabilities {
 
 	switch {
 	case strings.Contains(lower, "sonnet-4"):
-		// Sonnet 4 supports thinking and requires system profiles
+		// Sonnet 4 requires system profiles and supports thinking
 		return ModelCapabilities{
-			SupportsThinking:      true,
-			RequiresSystemProfile: true,
-			ProfileStrategy:       "discover",
+			SupportsThinking: true,
+			UseSystemProfile: true,
 		}
 	case strings.Contains(lower, "opus-4"):
-		// Opus 4.1 supports thinking
+		// Opus 4.1 supports thinking and custom profiles
 		return ModelCapabilities{
-			SupportsThinking:      true,
-			RequiresSystemProfile: false,
-			ProfileStrategy:       "create",
+			SupportsThinking: true,
+			UseSystemProfile: false,
 		}
 	case strings.Contains(lower, "opus") && strings.Contains(lower, "20240229"):
 		// Claude 3 Opus supports thinking
 		return ModelCapabilities{
-			SupportsThinking:      true,
-			RequiresSystemProfile: false,
-			ProfileStrategy:       "create",
+			SupportsThinking: true,
+			UseSystemProfile: false,
 		}
 	case strings.Contains(lower, "sonnet") && strings.Contains(lower, "20241022"):
 		// Claude 3.5 Sonnet (October 2024) supports thinking
 		return ModelCapabilities{
-			SupportsThinking:      true,
-			RequiresSystemProfile: false,
-			ProfileStrategy:       "create",
+			SupportsThinking: true,
+			UseSystemProfile: false,
 		}
 	default:
 		// Older models don't support thinking
 		return ModelCapabilities{
-			SupportsThinking:      false,
-			RequiresSystemProfile: false,
-			ProfileStrategy:       "create",
+			SupportsThinking: false,
+			UseSystemProfile: false,
 		}
 	}
+}
+
+// ensureProfile ensures we have a profile ARN for the model
+func ensureProfile(modelID string) (string, ModelCapabilities, error) {
+	caps := getModelCapabilities(modelID)
+
+	// For system profiles, use discovery
+	if caps.UseSystemProfile {
+		return ensureSystemProfile(modelID, caps)
+	}
+
+	// For custom profiles, use creation
+	return ensureCustomProfile(modelID, caps)
+}
+
+// ensureSystemProfile finds an AWS-provided system profile
+func ensureSystemProfile(modelID string, caps ModelCapabilities) (string, ModelCapabilities, error) {
+	// Check cache first
+	cacheKey := "system-" + deriveProfileName(modelID)
+	if cachedARN, found := getCachedProfile(cacheKey); found {
+		// Trust the cache - AWS system profiles are stable
+		return cachedARN, caps, nil
+	}
+
+	// Load config to check context preference
+	askConfig, _ := config.Load()
+	prefer1M := askConfig != nil && askConfig.Uses1MContext()
+
+	// Discover system profile
+	cfg, err := awsconfig.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", caps, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	client := bedrock.NewFromConfig(cfg)
+	profileArn, err := discoverSystemProfile(context.Background(), client, modelID, prefer1M)
+	if err != nil {
+		return "", caps, err
+	}
+
+	// Cache the discovered profile
+	setCachedProfile(cacheKey, profileArn, modelID, false)
+	return profileArn, caps, nil
+}
+
+// ensureCustomProfile ensures a custom profile exists
+func ensureCustomProfile(modelID string, caps ModelCapabilities) (string, ModelCapabilities, error) {
+	profileName := deriveProfileName(modelID)
+
+	// Check cache first - TRUST IT
+	if cachedARN, found := getCachedProfile(profileName); found {
+		// Return cached ARN immediately - no verification
+		// If it fails during actual use, we'll handle it then
+		return cachedARN, caps, nil
+	}
+
+	// No cache - create the profile
+	cfg, err := awsconfig.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", caps, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	client := bedrock.NewFromConfig(cfg)
+
+	// Try to get existing profile by name (in case it exists but isn't cached)
+	existingArn, err := findProfileByName(context.Background(), client, profileName)
+	if err == nil && existingArn != "" {
+		// Found existing profile - cache and return
+		setCachedProfile(profileName, existingArn, modelID, true)
+		return existingArn, caps, nil
+	}
+
+	// Create new profile
+	fmt.Printf("Creating inference profile '%s'... ", profileName)
+	arn, err := createInferenceProfile(context.Background(), client, profileName, modelID, cfg.Region)
+	if err != nil {
+		fmt.Println("failed")
+		return "", caps, err
+	}
+	fmt.Println("done")
+
+	// Cache the created profile
+	setCachedProfile(profileName, arn, modelID, true)
+	return arn, caps, nil
+}
+
+// findProfileByName searches for an existing profile by name
+func findProfileByName(ctx context.Context, client *bedrock.Client, profileName string) (string, error) {
+	input := &bedrock.ListInferenceProfilesInput{
+		MaxResults: aws.Int32(100),
+	}
+
+	result, err := client.ListInferenceProfiles(ctx, input)
+	if err != nil {
+		return "", err
+	}
+
+	for _, profile := range result.InferenceProfileSummaries {
+		if profile.InferenceProfileName != nil &&
+			*profile.InferenceProfileName == profileName &&
+			profile.InferenceProfileArn != nil {
+			return *profile.InferenceProfileArn, nil
+		}
+	}
+
+	return "", fmt.Errorf("profile not found")
 }
 
 // deriveProfileName generates a consistent profile name
@@ -82,90 +182,6 @@ func deriveProfileName(modelID string) string {
 	}
 }
 
-// ensureProfile ensures we have a profile ARN for the model
-func ensureProfile(modelID string) (string, ModelCapabilities, error) {
-	// Load config to check context preference
-	askConfig, _ := config.Load()
-	uses1M := askConfig != nil && askConfig.Uses1MContext()
-
-	caps := getModelCapabilities(modelID)
-
-	// CRITICAL: Sonnet 4 CANNOT use custom profiles, even for 1M context
-	if strings.Contains(strings.ToLower(modelID), "sonnet-4") {
-		if uses1M {
-			fmt.Println("Note: Sonnet 4 requires AWS-provided profiles for 1M context")
-			fmt.Println("      Custom 1M profiles are not supported for this model")
-		}
-		caps.RequiresSystemProfile = true
-		caps.ProfileStrategy = "discover"
-	}
-
-	cfg, err := awsconfig.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		return "", caps, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	client := bedrock.NewFromConfig(cfg)
-	ctx := context.Background()
-
-	// For system profiles, always discover
-	if caps.ProfileStrategy == "discover" {
-		// Check cache for discovered system profiles
-		profileName := "system-" + deriveProfileName(modelID)
-		if cachedARN, found := getCachedProfile(profileName); found {
-			// Quickly verify it still exists (system profiles should be stable)
-			return cachedARN, caps, nil
-		}
-
-		// Find system profile
-		profileArn, err := discoverSystemProfile(ctx, client, modelID, uses1M)
-		if err != nil {
-			return "", caps, fmt.Errorf("failed to find system profile: %w", err)
-		}
-
-		// Cache the discovered profile
-		setCachedProfile(profileName, profileArn, modelID, false)
-		return profileArn, caps, nil
-	}
-
-	// For custom profiles, check cache FIRST
-	profileName := deriveProfileName(modelID)
-
-	// Check cache before any creation attempt
-	if cachedARN, found := getCachedProfile(profileName); found {
-		// Quick verification that it still exists
-		if profile, err := getInferenceProfile(ctx, client, profileName); err == nil && profile != nil {
-			// Cache hit - profile exists
-			return cachedARN, caps, nil
-		}
-		// Profile was deleted, continue to recreate
-	}
-
-	// Check if profile exists but isn't cached
-	if profile, err := getInferenceProfile(ctx, client, profileName); err == nil && profile != nil {
-		if profile.InferenceProfileArn != nil {
-			arn := *profile.InferenceProfileArn
-			// Add to cache
-			setCachedProfile(profileName, arn, modelID, true)
-			return arn, caps, nil
-		}
-	}
-
-	// Only NOW do we create the profile
-	fmt.Printf("Creating inference profile '%s'... ", profileName)
-	arn, err := createInferenceProfile(ctx, client, profileName, modelID, cfg.Region)
-	if err != nil {
-		fmt.Println("failed")
-		return "", caps, err
-	}
-	fmt.Println("done")
-
-	// Cache the created profile
-	setCachedProfile(profileName, arn, modelID, true)
-
-	return arn, caps, nil
-}
-
 // discoverSystemProfile finds an existing system profile that supports the model
 func discoverSystemProfile(ctx context.Context, client *bedrock.Client, modelID string, prefer1M bool) (string, error) {
 	input := &bedrock.ListInferenceProfilesInput{
@@ -180,6 +196,20 @@ func discoverSystemProfile(ctx context.Context, client *bedrock.Client, modelID 
 	var standardProfile string
 	var extendedProfile string
 
+	// Extract model type from modelID for flexible matching
+	// e.g., "us.anthropic.claude-3-5-sonnet-20241022-v2:0" -> "sonnet"
+	// e.g., "anthropic.claude-3-opus-20240229-v1:0" -> "opus"
+	modelLower := strings.ToLower(modelID)
+	var modelType string
+	switch {
+	case strings.Contains(modelLower, "sonnet"):
+		modelType = "sonnet"
+	case strings.Contains(modelLower, "opus"):
+		modelType = "opus"
+	case strings.Contains(modelLower, "haiku"):
+		modelType = "haiku"
+	}
+
 	// Look for profiles that support this model
 	for _, profile := range result.InferenceProfileSummaries {
 		if profile.InferenceProfileArn == nil {
@@ -192,31 +222,43 @@ func discoverSystemProfile(ctx context.Context, client *bedrock.Client, modelID 
 			profileName = *profile.InferenceProfileName
 		}
 
-		// Check if this profile supports our model
+		// Check if this profile supports our specific model
 		supportsModel := false
+
+		// First, check explicit model support
 		if profile.Models != nil {
 			for _, model := range profile.Models {
-				if model.ModelArn != nil && strings.Contains(*model.ModelArn, "sonnet-4") {
-					supportsModel = true
-					break
+				if model.ModelArn != nil {
+					modelArnStr := *model.ModelArn
+					// Check if the profile's model ARN contains our model ID or type
+					if strings.Contains(modelArnStr, modelID) ||
+						(modelType != "" && strings.Contains(strings.ToLower(modelArnStr), modelType)) {
+						supportsModel = true
+						break
+					}
 				}
 			}
 		}
 
-		// Also check by name patterns
-		if !supportsModel {
-			if strings.Contains(profileName, "sonnet") ||
-				strings.Contains(profileName, "Sonnet") ||
-				strings.Contains(profileName, "cross-region") {
+		// Also check by profile name patterns if model type is known
+		if !supportsModel && modelType != "" {
+			profileNameLower := strings.ToLower(profileName)
+			// Check if profile name indicates it's for our model type
+			if strings.Contains(profileNameLower, modelType) ||
+				(strings.Contains(profileNameLower, "cross-region") &&
+					strings.Contains(profileNameLower, "inference")) {
+				// Cross-region inference profiles might support multiple models
 				supportsModel = true
 			}
 		}
 
 		if supportsModel {
 			// Check if it's a 1M context profile
-			if strings.Contains(profileName, "1m") ||
-				strings.Contains(profileName, "1M") ||
-				strings.Contains(profileName, "million") {
+			profileNameLower := strings.ToLower(profileName)
+			if strings.Contains(profileNameLower, "1m") ||
+				strings.Contains(profileNameLower, "1M") ||
+				strings.Contains(profileNameLower, "million") ||
+				strings.Contains(profileNameLower, "extended") {
 				extendedProfile = profileArn
 			} else {
 				standardProfile = profileArn
@@ -231,42 +273,30 @@ func discoverSystemProfile(ctx context.Context, client *bedrock.Client, modelID 
 	}
 
 	if standardProfile != "" {
-		if prefer1M {
+		if prefer1M && extendedProfile == "" {
 			fmt.Printf("Note: 1M context profile not found, using standard profile\n")
 		}
 		return standardProfile, nil
 	}
 
-	return "", fmt.Errorf(`no suitable system profile found for Sonnet 4.
+	// Provide model-specific error message
+	modelDesc := modelType
+	if modelDesc == "" {
+		modelDesc = "model"
+	}
+
+	return "", fmt.Errorf(`no suitable system profile found for %s (%s).
 
 This model requires a system-provided inference profile.
 Your AWS account may need:
 1. Cross-region inference enabled
-2. Access to Sonnet 4 profiles
+2. Access to %s profiles
+3. Appropriate AWS tier for this model
 
 Contact your AWS administrator or try:
   ask cfg model opus     # Claude Opus (supports custom profiles)
-  ask cfg model sonnet   # Claude 3.5 Sonnet (older version)`)
-}
-
-// getInferenceProfile retrieves an inference profile by name
-func getInferenceProfile(ctx context.Context, client *bedrock.Client, profileName string) (*types.InferenceProfileSummary, error) {
-	input := &bedrock.ListInferenceProfilesInput{
-		MaxResults: aws.Int32(100),
-	}
-
-	result, err := client.ListInferenceProfiles(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list profiles: %w", err)
-	}
-
-	for _, profile := range result.InferenceProfileSummaries {
-		if profile.InferenceProfileName != nil && *profile.InferenceProfileName == profileName {
-			return &profile, nil
-		}
-	}
-
-	return nil, fmt.Errorf("profile not found")
+  ask cfg model haiku    # Claude Haiku (may support custom profiles)`,
+		modelDesc, modelID, modelDesc)
 }
 
 // createInferenceProfile creates a new inference profile
@@ -303,6 +333,7 @@ func createInferenceProfile(ctx context.Context, client *bedrock.Client, profile
 	}
 
 	if result.InferenceProfileArn != nil {
+		// Small delay to ensure profile is ready
 		time.Sleep(2 * time.Second)
 		return *result.InferenceProfileArn, nil
 	}
@@ -310,7 +341,9 @@ func createInferenceProfile(ctx context.Context, client *bedrock.Client, profile
 	return profileName, nil
 }
 
-// ProfileNameFromModel returns the profile name for a model
-func ProfileNameFromModel(modelID string) string {
-	return deriveProfileName(modelID)
+// invalidateCachedProfile removes a profile from cache
+func invalidateCachedProfile(profileName string) {
+	cache, _ := loadProfileCache()
+	delete(cache.Profiles, profileName)
+	saveProfileCache(cache)
 }

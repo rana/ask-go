@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/alecthomas/kong"
 	"github.com/rana/ask/cmd"
@@ -16,12 +19,33 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Set up signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle interrupt signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\nInterrupting...")
+		cancel()
+		// Second signal forces exit
+		<-sigChan
+		fmt.Println("\nForce exiting...")
+		os.Exit(1)
+	}()
+
 	cli := cmd.CLI{}
-	ctx := kong.Parse(&cli,
+	kongCtx := kong.Parse(&cli,
 		kong.Name("ask"),
 		kong.Description("A thought preservation and amplification system"),
 		kong.UsageOnError(),
 	)
-	err := ctx.Run()
-	ctx.FatalIfErrorf(err)
+
+	// Bind the context for commands to use
+	kongCtx.Bind(ctx)
+
+	err := kongCtx.Run(&cmd.Context{Context: ctx})
+	kongCtx.FatalIfErrorf(err)
 }

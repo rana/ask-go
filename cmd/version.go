@@ -10,7 +10,7 @@ import (
 type VersionCmd struct{}
 
 // Run executes the version command
-func (c *VersionCmd) Run() error {
+func (c *VersionCmd) Run(cmdCtx *Context) error {
 	fmt.Println(version.String())
 	return nil
 }

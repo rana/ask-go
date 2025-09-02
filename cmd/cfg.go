@@ -21,7 +21,7 @@ type CfgCmd struct {
 }
 
 // Run shows current configuration
-func (c *CfgCmd) Run() error {
+func (c *CfgCmd) Run(cmdCtx *Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -51,7 +51,7 @@ func (c *CfgCmd) Run() error {
 // CfgModelsCmd lists available models
 type CfgModelsCmd struct{}
 
-func (c *CfgModelsCmd) Run() error {
+func (c *CfgModelsCmd) Run(cmdCtx *Context) error {
 	output, err := config.ListModels()
 	if err != nil {
 		return fmt.Errorf("failed to list models: %w", err)
@@ -65,7 +65,7 @@ type CfgModelCmd struct {
 	Model string `arg:"" help:"Model type (opus/sonnet/haiku) or full model ID"`
 }
 
-func (c *CfgModelCmd) Run() error {
+func (c *CfgModelCmd) Run(cmdCtx *Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -94,7 +94,7 @@ type CfgTemperatureCmd struct {
 	Temperature float64 `arg:"" help:"Temperature value (0.0-1.0)"`
 }
 
-func (c *CfgTemperatureCmd) Run() error {
+func (c *CfgTemperatureCmd) Run(cmdCtx *Context) error {
 	if c.Temperature < 0 || c.Temperature > 1 {
 		return fmt.Errorf("temperature must be between 0.0 and 1.0")
 	}
@@ -118,7 +118,7 @@ type CfgMaxTokensCmd struct {
 	MaxTokens int `arg:"" help:"Maximum tokens"`
 }
 
-func (c *CfgMaxTokensCmd) Run() error {
+func (c *CfgMaxTokensCmd) Run(cmdCtx *Context) error {
 	if c.MaxTokens <= 0 {
 		return fmt.Errorf("max tokens must be positive")
 	}
@@ -142,7 +142,7 @@ type CfgTimeoutCmd struct {
 	Timeout string `arg:"" help:"Timeout duration (e.g., 5m, 30s)"`
 }
 
-func (c *CfgTimeoutCmd) Run() error {
+func (c *CfgTimeoutCmd) Run(cmdCtx *Context) error {
 	// Validate duration format
 	if _, err := config.Defaults().ParseTimeout(); err != nil {
 		return fmt.Errorf("invalid duration format: %w", err)
@@ -167,7 +167,7 @@ type CfgThinkingCmd struct {
 	Enable string `arg:"" help:"Enable thinking: on/off/true/false"`
 }
 
-func (c *CfgThinkingCmd) Run() error {
+func (c *CfgThinkingCmd) Run(cmdCtx *Context) error {
 	enable := false
 	switch strings.ToLower(c.Enable) {
 	case "on", "true", "yes", "1":
@@ -202,7 +202,7 @@ type CfgThinkingBudgetCmd struct {
 	Budget string `arg:"" help:"Budget as decimal (0.8) or percentage (80%)"`
 }
 
-func (c *CfgThinkingBudgetCmd) Run() error {
+func (c *CfgThinkingBudgetCmd) Run(cmdCtx *Context) error {
 	var budget float64
 	var err error
 
@@ -245,7 +245,7 @@ type CfgContextCmd struct {
 	Size string `arg:"" optional:"" help:"Context size: standard or 1m"`
 }
 
-func (c *CfgContextCmd) Run() error {
+func (c *CfgContextCmd) Run(cmdCtx *Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
