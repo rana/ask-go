@@ -96,21 +96,29 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
 
+	// Track if we need to update the config file
+	needsUpdate := false
+
 	// Apply defaults for any missing fields
 	if cfg.Version == 0 {
 		cfg.Version = 1
+		needsUpdate = true
 	}
 	if cfg.Temperature == 0 {
 		cfg.Temperature = 1.0
+		needsUpdate = true
 	}
 	if cfg.MaxTokens == 0 {
 		cfg.MaxTokens = 32000
+		needsUpdate = true
 	}
 	if cfg.Timeout == "" {
 		cfg.Timeout = "5m"
+		needsUpdate = true
 	}
 	if cfg.Thinking.Budget == 0 {
 		cfg.Thinking.Budget = 0.8
+		needsUpdate = true
 	}
 	if cfg.Bedrock == nil {
 		cfg.Bedrock = make(map[string]interface{})
@@ -119,14 +127,30 @@ func Load() (*Config, error) {
 	// Apply defaults for expand if missing
 	if cfg.Expand.MaxDepth == 0 {
 		cfg.Expand.MaxDepth = 3
+		needsUpdate = true
 	}
 	if len(cfg.Expand.Include.Extensions) == 0 {
 		defaults := Defaults()
 		cfg.Expand.Include = defaults.Expand.Include
+		needsUpdate = true
+	}
+	if len(cfg.Expand.Exclude.Patterns) == 0 {
+		defaults := Defaults()
+		cfg.Expand.Exclude.Patterns = defaults.Expand.Exclude.Patterns
+		needsUpdate = true
 	}
 	if len(cfg.Expand.Exclude.Directories) == 0 {
 		defaults := Defaults()
-		cfg.Expand.Exclude = defaults.Expand.Exclude
+		cfg.Expand.Exclude.Directories = defaults.Expand.Exclude.Directories
+		needsUpdate = true
+	}
+
+	// Save back if we added defaults
+	if needsUpdate {
+		if err := cfg.Save(); err != nil {
+			// Non-fatal, just warn
+			fmt.Fprintf(os.Stderr, "Warning: couldn't update config with new defaults: %v\n", err)
+		}
 	}
 
 	return cfg, nil

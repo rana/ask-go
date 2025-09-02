@@ -18,7 +18,7 @@ type FileStat struct {
 	Tokens int
 }
 
-// ExpandReferences expands \[\[file]] and \[\[dir/]] references in content
+// ExpandReferences expands [[file]] and [[dir/]] references in content
 func ExpandReferences(content string, turnNumber int) (string, []FileStat, error) {
 	// Load config for expansion rules
 	cfg, err := config.Load()
@@ -27,7 +27,7 @@ func ExpandReferences(content string, turnNumber int) (string, []FileStat, error
 		cfg = config.Defaults()
 	}
 
-	// Pattern to match \[\[file]] or \[\[dir/]] references
+	// Pattern to match [[file]] or [[dir/]] references
 	pattern := regexp.MustCompile(`\[\[([^\]]+)\]\]`)
 	matches := pattern.FindAllStringSubmatch(content, -1)
 
@@ -40,7 +40,7 @@ func ExpandReferences(content string, turnNumber int) (string, []FileStat, error
 	sectionNumber := 1
 
 	for _, match := range matches {
-		fullMatch := match[0] // \[\[file]] or \[\[dir/]]
+		fullMatch := match[0] // [[file]] or [[dir/]]
 		path := match[1]      // file or dir/
 
 		// Check if this is a directory reference (ends with /)
@@ -136,7 +136,7 @@ func expandDirectory(dirPath string, turnNumber, startSection int, expandCfg *co
 		filePath := filepath.Join(dirPath, fileName)
 
 		// Check if file should be included
-		if shouldIncludeFile(fileName, expandCfg) {
+		if shouldIncludeFile(fileName, filePath, expandCfg) {
 			files = append(files, filePath)
 		}
 	}
@@ -184,9 +184,28 @@ func expandDirectory(dirPath string, turnNumber, startSection int, expandCfg *co
 }
 
 // shouldIncludeFile checks if a file should be included based on config
-func shouldIncludeFile(fileName string, expandCfg *config.Expand) bool {
-	// Check exclude patterns first
+func shouldIncludeFile(fileName string, filePath string, expandCfg *config.Expand) bool {
+	// Normalize path separators for consistent matching
+	relativePath := filepath.ToSlash(filePath)
+
+	// Check exclude directories first (these should never be traversed)
+	for _, excludeDir := range expandCfg.Exclude.Directories {
+		// Check if any part of the path contains the excluded directory
+		pathParts := strings.Split(relativePath, "/")
+		for _, part := range pathParts {
+			if part == excludeDir {
+				return false
+			}
+		}
+	}
+
+	// Check exclude patterns against both full path and basename
 	for _, pattern := range expandCfg.Exclude.Patterns {
+		// Check against full relative path
+		if matched, _ := filepath.Match(pattern, relativePath); matched {
+			return false
+		}
+		// Check against basename for convenience
 		if matched, _ := filepath.Match(pattern, fileName); matched {
 			return false
 		}
