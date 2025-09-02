@@ -47,20 +47,20 @@ jobs:
           COMMIT=${{ steps.version.outputs.commit }}
           DATE="${{ steps.version.outputs.date }}"
           
-          # Common ldflags for reproducible builds
-          LDFLAGS="-s -w -trimpath \
+          # Common ldflags
+          LDFLAGS="-s -w \
             -X 'github.com/rana/ask/internal/version.Version=${VERSION}' \
             -X 'github.com/rana/ask/internal/version.GitCommit=${COMMIT}' \
             -X 'github.com/rana/ask/internal/version.BuildDate=${DATE}'"
           
           # Build for Darwin ARM64 (Apple Silicon)
           echo "Building for darwin-arm64..."
-          GOOS=darwin GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o ask-darwin-arm64 .
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "${LDFLAGS}" -o ask-darwin-arm64 .
           
           # Build for Linux AMD64
           echo "Building for linux-amd64..."
-          GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o ask-linux-amd64 .
-      
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o ask-linux-amd64 .      
+
       - name: Create archives
         run: |
           VERSION=${{ steps.version.outputs.version }}
