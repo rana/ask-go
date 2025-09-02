@@ -87,22 +87,14 @@ func (c *ChatCmd) Run(cmdCtx *Context) error {
 		}
 	}
 
-	// Show expansion stats
+	// Show expansion stats (only if there are expansions)
 	if totalExpansions > 0 {
 		fmt.Printf("Expanding %d file references...\n", totalExpansions)
 		for _, stat := range allStats {
-			fmt.Printf("- %s (%d tokens)\n", stat.File, stat.Tokens)
+			fmt.Printf("  %s (%d tokens)\n", stat.File, stat.Tokens)
 		}
+		fmt.Println()
 	}
-
-	// Calculate token statistics
-	totalInputTokens := 0
-	for _, turn := range turns {
-		tokens := countTokensApprox(turn.Content)
-		totalInputTokens += tokens
-		fmt.Printf("%s turn %d: %d tokens\n", turn.Role, turn.Number, tokens)
-	}
-	fmt.Printf("Total input: %d tokens\n", totalInputTokens)
 
 	// Show model being used
 	if cfg != nil {
@@ -163,11 +155,6 @@ func (c *ChatCmd) Run(cmdCtx *Context) error {
 	} else {
 		fmt.Printf("Response complete: %d tokens\n", finalTokenCount)
 	}
-
-	// Show final session size
-	finalContent, _ := os.ReadFile("session.md")
-	totalSessionTokens := countTokensApprox(string(finalContent))
-	fmt.Printf("Total session: %d tokens\n", totalSessionTokens)
 
 	return nil
 }
