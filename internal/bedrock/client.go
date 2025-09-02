@@ -11,15 +11,25 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/rana/ask/internal/config"
+	"github.com/rana/ask/internal/session"
 )
 
 // SendToClaude sends content to Claude via AWS Bedrock Converse API
 func SendToClaude(content string) (string, error) {
-	return sendToClaudeWithRetry(content, false)
+	// Build a single message for backwards compatibility
+	messages := []session.Turn{
+		{Number: 1, Role: "Human", Content: content},
+	}
+	return SendToClaudeWithHistory(messages)
+}
+
+// SendToClaudeWithHistory sends a full conversation history to Claude
+func SendToClaudeWithHistory(turns []session.Turn) (string, error) {
+	return sendToClaudeWithRetry(turns, false)
 }
 
 // sendToClaudeWithRetry handles the actual sending with retry logic for stale profiles
-func sendToClaudeWithRetry(content string, isRetry bool) (string, error) {
+func sendToClaudeWithRetry(turns []session.Turn, isRetry bool) (string, error) {
 	// Load Ask configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -63,14 +73,24 @@ func sendToClaudeWithRetry(content string, isRetry bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Build the message
-	userMessage := types.Message{
-		Role: types.ConversationRoleUser,
-		Content: []types.ContentBlock{
-			&types.ContentBlockMemberText{
-				Value: content,
+	// Build message array from turns
+	var messages []types.Message
+	for _, turn := range turns {
+		var role types.ConversationRole
+		if turn.Role == "Human" {
+			role = types.ConversationRoleUser
+		} else {
+			role = types.ConversationRoleAssistant
+		}
+
+		messages = append(messages, types.Message{
+			Role: role,
+			Content: []types.ContentBlock{
+				&types.ContentBlockMemberText{
+					Value: turn.Content,
+				},
 			},
-		},
+		})
 	}
 
 	// Build standard inference configuration
@@ -82,7 +102,7 @@ func sendToClaudeWithRetry(content string, isRetry bool) (string, error) {
 	// Build the request
 	input := &bedrockruntime.ConverseInput{
 		ModelId:         aws.String(profileArn),
-		Messages:        []types.Message{userMessage},
+		Messages:        messages,
 		InferenceConfig: inferenceConfig,
 	}
 
@@ -128,7 +148,7 @@ func sendToClaudeWithRetry(content string, isRetry bool) (string, error) {
 			strings.Contains(err.Error(), "not found") ||
 			strings.Contains(err.Error(), "does not exist")) {
 			fmt.Println("Profile may be stale, refreshing...")
-			return sendToClaudeWithRetry(content, true)
+			return sendToClaudeWithRetry(turns, true)
 		}
 
 		// Provide helpful error messages

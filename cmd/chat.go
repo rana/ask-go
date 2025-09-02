@@ -31,31 +31,74 @@ func (c *ChatCmd) Run() error {
 		return fmt.Errorf("failed to read session.md: %w", err)
 	}
 
-	// Parse session to find last human turn
-	turnNumber, turnContent := session.FindLastHumanTurn(string(content))
-	if turnNumber == 0 {
-		return fmt.Errorf("no human turn found in session.md")
-	}
-	if turnContent == "" {
-		return fmt.Errorf("turn %d has no content. Add your thoughts and try again", turnNumber)
+	// Parse all turns from the session
+	turns, err := session.ParseAllTurns(string(content))
+	if err != nil {
+		return fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	// Expand file references
-	expanded, stats, err := expand.ExpandReferences(turnContent, turnNumber)
-	if err != nil {
-		return fmt.Errorf("failed to expand references: %w", err)
+	// Check if there's at least one human turn
+	lastHumanIndex := -1
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "Human" {
+			lastHumanIndex = i
+			break
+		}
+	}
+
+	if lastHumanIndex == -1 {
+		return fmt.Errorf("no human turn found in session.md")
+	}
+
+	// Check if the last human turn has content
+	if turns[lastHumanIndex].Content == "" {
+		return fmt.Errorf("turn %d has no content. Add your thoughts and try again",
+			turns[lastHumanIndex].Number)
+	}
+
+	// Expand file references in all human turns
+	totalExpansions := 0
+	var allStats []expand.FileStat
+	originalContent := string(content)
+	updatedContent := originalContent
+
+	for i, turn := range turns {
+		if turn.Role == "Human" {
+			expanded, stats, err := expand.ExpandReferences(turn.Content, turn.Number)
+			if err != nil {
+				return fmt.Errorf("failed to expand references in turn %d: %w", turn.Number, err)
+			}
+
+			if len(stats) > 0 {
+				// Update the turn with expanded content
+				turns[i].Content = expanded
+				allStats = append(allStats, stats...)
+				totalExpansions += len(stats)
+
+				// Update session.md with expanded content if this is the last human turn
+				if i == lastHumanIndex {
+					updatedContent = session.ReplaceLastHumanTurn(originalContent, turn.Number, expanded)
+				}
+			}
+		}
 	}
 
 	// Show expansion stats
-	if len(stats) > 0 {
-		fmt.Printf("Expanding %d file references...\n", len(stats))
-		for _, stat := range stats {
+	if totalExpansions > 0 {
+		fmt.Printf("Expanding %d file references...\n", totalExpansions)
+		for _, stat := range allStats {
 			fmt.Printf("- %s (%d tokens)\n", stat.File, stat.Tokens)
 		}
 	}
 
-	humanTokens := countTokensApprox(expanded)
-	fmt.Printf("Human turn: %d tokens\n", humanTokens)
+	// Calculate token statistics
+	totalTokens := 0
+	for _, turn := range turns {
+		tokens := countTokensApprox(turn.Content)
+		totalTokens += tokens
+		fmt.Printf("%s turn %d: %d tokens\n", turn.Role, turn.Number, tokens)
+	}
+	fmt.Printf("Total input: %d tokens\n", totalTokens)
 
 	// Show model being used
 	if cfg != nil {
@@ -67,9 +110,9 @@ func (c *ChatCmd) Run() error {
 	}
 	fmt.Println()
 
-	// Send to Bedrock
-	fmt.Println("Sending to Claude...")
-	response, err := bedrock.SendToClaude(expanded)
+	// Send full conversation history to Bedrock
+	fmt.Println("Sending conversation to Claude...")
+	response, err := bedrock.SendToClaudeWithHistory(turns)
 	if err != nil {
 		return fmt.Errorf("failed to send to Claude: %w", err)
 	}
@@ -77,17 +120,19 @@ func (c *ChatCmd) Run() error {
 	aiTokens := countTokensApprox(response)
 	fmt.Printf("\nAI response: %d tokens\n", aiTokens)
 
-	// Update session.md with expanded content and response
-	updatedContent := session.ReplaceLastHumanTurn(string(content), turnNumber, expanded)
-	updatedContent = session.AppendAIResponse(updatedContent, turnNumber+1, response)
+	// Calculate next turn number
+	nextTurnNumber := turns[len(turns)-1].Number + 1
+
+	// Append AI response to session
+	updatedContent = session.AppendAIResponse(updatedContent, nextTurnNumber, response)
 
 	// Write updated session atomically
 	if err := session.WriteAtomic("session.md", []byte(updatedContent)); err != nil {
 		return fmt.Errorf("failed to update session.md: %w", err)
 	}
 
-	totalTokens := countTokensApprox(updatedContent)
-	fmt.Printf("Total session: %d tokens\n", totalTokens)
+	totalSessionTokens := countTokensApprox(updatedContent)
+	fmt.Printf("Total session: %d tokens\n", totalSessionTokens)
 
 	return nil
 }
