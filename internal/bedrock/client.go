@@ -15,6 +15,11 @@ import (
 
 // SendToClaude sends content to Claude via AWS Bedrock Converse API
 func SendToClaude(content string) (string, error) {
+	return sendToClaudeWithRetry(content, false)
+}
+
+// sendToClaudeWithRetry handles the actual sending with retry logic for stale profiles
+func sendToClaudeWithRetry(content string, isRetry bool) (string, error) {
 	// Load Ask configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -25,6 +30,12 @@ func SendToClaude(content string) (string, error) {
 	modelID, err := cfg.ResolveModel()
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve model: %w", err)
+	}
+
+	// If this is a retry, invalidate the cache first
+	if isRetry {
+		profileName := deriveProfileName(modelID)
+		invalidateCachedProfile(profileName)
 	}
 
 	// Ensure profile exists and get capabilities
@@ -75,11 +86,8 @@ func SendToClaude(content string) (string, error) {
 		InferenceConfig: inferenceConfig,
 	}
 
-	// Only add additional fields for non-system profiles OR when we created a custom profile
-	isCustomProfile := !capabilities.RequiresSystemProfile ||
-		(cfg.Uses1MContext() && strings.Contains(strings.ToLower(modelID), "sonnet-4"))
-
-	if isCustomProfile {
+	// Add additional fields for custom profiles
+	if !capabilities.UseSystemProfile {
 		additionalFields := make(map[string]interface{})
 
 		// Add thinking configuration if enabled and supported
@@ -93,12 +101,9 @@ func SendToClaude(content string) (string, error) {
 		// Add 1M context beta header for Sonnet 4
 		if cfg.Uses1MContext() && strings.Contains(strings.ToLower(modelID), "sonnet-4") {
 			additionalFields["anthropic-beta"] = "context-1m-2025-08-07"
-			// Note: might also need to add this as a header, not just in additional fields
-			// The exact mechanism depends on AWS Bedrock's implementation
 		}
 
 		// Add any other Bedrock parameters from config
-		// Skip 'thinking' and 'enable_1m_context' since we handle them above
 		for key, value := range cfg.Bedrock {
 			if key != "thinking" && key != "enable_1m_context" {
 				additionalFields[key] = value
@@ -118,6 +123,14 @@ func SendToClaude(content string) (string, error) {
 	// Send to Bedrock
 	result, err := client.Converse(ctx, input)
 	if err != nil {
+		// Check for profile-related errors and retry once
+		if !isRetry && (strings.Contains(err.Error(), "profile") ||
+			strings.Contains(err.Error(), "not found") ||
+			strings.Contains(err.Error(), "does not exist")) {
+			fmt.Println("Profile may be stale, refreshing...")
+			return sendToClaudeWithRetry(content, true)
+		}
+
 		// Provide helpful error messages
 		errStr := err.Error()
 		if strings.Contains(errStr, "Extra inputs") {

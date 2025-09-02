@@ -98,3 +98,10 @@ func setCachedProfile(profileName, arn, modelID string, custom bool) error {
 
 	return saveProfileCache(cache)
 }
+
+// InvalidateCachedProfile removes a profile from cache (exported)
+func InvalidateCachedProfile(profileName string) {
+	cache, _ := loadProfileCache()
+	delete(cache.Profiles, profileName)
+	saveProfileCache(cache)
+}
