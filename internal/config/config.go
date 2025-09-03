@@ -19,6 +19,7 @@ type Config struct {
 	Context     string                 `toml:"context"`
 	Thinking    Thinking               `toml:"thinking"`
 	Expand      Expand                 `toml:"expand"`
+	Filter      Filter                 `toml:"filter"`
 	Bedrock     map[string]interface{} `toml:"bedrock,omitempty"`
 }
 
@@ -48,6 +49,20 @@ type ExcludeSpec struct {
 	Directories []string `toml:"directories"`
 }
 
+// Filter represents content filtering configuration
+type Filter struct {
+	Enabled          bool     `toml:"enabled"`
+	StripHeaders     bool     `toml:"strip_headers"`
+	StripAllComments bool     `toml:"strip_all_comments"`
+	Go               GoFilter `toml:"go"`
+}
+
+// GoFilter represents Go-specific filtering
+type GoFilter struct {
+	HeaderLines    int      `toml:"header_lines"`
+	HeaderKeywords []string `toml:"header_keywords"`
+}
+
 // Defaults returns a config with sensible defaults
 func Defaults() *Config {
 	return &Config{
@@ -71,6 +86,18 @@ func Defaults() *Config {
 			Exclude: ExcludeSpec{
 				Patterns:    []string{"*_test.go", "*.pb.go", "*_generated.go", "*.min.js", "*.min.css", "*.map"},
 				Directories: []string{"vendor", "node_modules", ".git", "dist", "build", "target", "bin", "obj", ".idea", ".vscode", "__pycache__", ".pytest_cache", ".next", ".nuxt", ".output"},
+			},
+		},
+		Filter: Filter{
+			Enabled:          true,
+			StripHeaders:     true,
+			StripAllComments: false,
+			Go: GoFilter{
+				HeaderLines: 15,
+				HeaderKeywords: []string{
+					"Copyright", "copyright", "LICENSE", "License",
+					"Licensed", "SPDX", "AUTHORS", "NOTICE",
+				},
 			},
 		},
 		Bedrock: make(map[string]interface{}),
@@ -142,6 +169,13 @@ func Load() (*Config, error) {
 	if len(cfg.Expand.Exclude.Directories) == 0 {
 		defaults := Defaults()
 		cfg.Expand.Exclude.Directories = defaults.Expand.Exclude.Directories
+		needsUpdate = true
+	}
+
+	// Apply defaults for filter if missing
+	if cfg.Filter.Go.HeaderLines == 0 {
+		defaults := Defaults()
+		cfg.Filter = defaults.Filter
 		needsUpdate = true
 	}
 

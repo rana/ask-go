@@ -9,10 +9,12 @@ import (
 
 // StreamWriter handles streaming writes to session.md
 type StreamWriter struct {
-	file          *os.File
-	writer        *bufio.Writer
-	turnNumber    int
-	isInterrupted bool
+	file           *os.File
+	writer         *bufio.Writer
+	turnNumber     int
+	headerWritten  bool // Track if we've written the AI header
+	contentWritten bool // Track if any actual content was written
+	isInterrupted  bool
 }
 
 // NewStreamWriter creates a new streaming writer for the AI response
@@ -23,26 +25,33 @@ func NewStreamWriter(path string, turnNumber int) (*StreamWriter, error) {
 		return nil, fmt.Errorf("failed to open session for writing: %w", err)
 	}
 
-	writer := bufio.NewWriter(file)
+	return &StreamWriter{
+		file:           file,
+		writer:         bufio.NewWriter(file),
+		turnNumber:     turnNumber,
+		headerWritten:  false,
+		contentWritten: false,
+	}, nil
+}
 
-	// Write AI header with two blank lines before
-	header := fmt.Sprintf("\n\n# [%d] AI\n\n````markdown\n", turnNumber)
-	if _, err := writer.WriteString(header); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("failed to write header: %w", err)
+// writeHeader writes the AI header and markdown fence when first content arrives
+func (sw *StreamWriter) writeHeader() error {
+	if sw.headerWritten {
+		return nil
+	}
+
+	header := fmt.Sprintf("\n\n# [%d] AI\n\n````markdown\n", sw.turnNumber)
+	if _, err := sw.writer.WriteString(header); err != nil {
+		return fmt.Errorf("failed to write header: %w", err)
 	}
 
 	// Flush header immediately so it's visible
-	if err := writer.Flush(); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("failed to flush header: %w", err)
+	if err := sw.writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush header: %w", err)
 	}
 
-	return &StreamWriter{
-		file:       file,
-		writer:     writer,
-		turnNumber: turnNumber,
-	}, nil
+	sw.headerWritten = true
+	return nil
 }
 
 // WriteChunk writes a chunk of response content
@@ -51,9 +60,23 @@ func (sw *StreamWriter) WriteChunk(chunk string) error {
 		return nil // Don't write after interruption
 	}
 
+	// Skip empty chunks
+	if chunk == "" {
+		return nil
+	}
+
+	// Write header on first real content
+	if !sw.headerWritten {
+		if err := sw.writeHeader(); err != nil {
+			return err
+		}
+	}
+
 	if _, err := sw.writer.WriteString(chunk); err != nil {
 		return fmt.Errorf("failed to write chunk: %w", err)
 	}
+
+	sw.contentWritten = true
 
 	// Flush after each chunk for immediate visibility
 	return sw.writer.Flush()
@@ -63,19 +86,27 @@ func (sw *StreamWriter) WriteChunk(chunk string) error {
 func (sw *StreamWriter) Close(interrupted bool, tokenCount int) error {
 	defer sw.file.Close()
 
-	if interrupted && !sw.isInterrupted {
+	// If nothing was written at all, just close and return
+	if !sw.headerWritten {
+		return nil
+	}
+
+	// Only write interruption marker if we actually started writing content
+	if interrupted && !sw.isInterrupted && sw.contentWritten {
 		sw.isInterrupted = true
 		// Add interruption marker
-		marker := fmt.Sprintf("\n[Interrupted after ~%d tokens]", tokenCount)
+		marker := fmt.Sprintf("\n[Interrupted after %d tokens]", tokenCount)
 		sw.writer.WriteString(marker)
 	}
 
-	// Close markdown fence
-	sw.writer.WriteString("\n````\n")
+	// Close markdown fence (only if we opened it)
+	if sw.headerWritten {
+		sw.writer.WriteString("\n````\n")
 
-	// Add two blank lines and next Human turn
-	nextTurn := fmt.Sprintf("\n\n# [%d] Human\n\n", sw.turnNumber+1)
-	sw.writer.WriteString(nextTurn)
+		// Only add next Human turn if we wrote AI content
+		nextTurn := fmt.Sprintf("\n\n# [%d] Human\n\n", sw.turnNumber+1)
+		sw.writer.WriteString(nextTurn)
+	}
 
 	// Final flush
 	if err := sw.writer.Flush(); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rana/ask/internal/bedrock"
 	"github.com/rana/ask/internal/config"
@@ -91,7 +92,12 @@ func (c *ChatCmd) Run(cmdCtx *Context) error {
 	if totalExpansions > 0 {
 		fmt.Printf("Expanding %d file references...\n", totalExpansions)
 		for _, stat := range allStats {
-			fmt.Printf("  %s (%d tokens)\n", stat.File, stat.Tokens)
+			// Show directory indicator for multiple files from same dir
+			if strings.Contains(stat.File, "/") {
+				fmt.Printf("  %s (%d tokens)\n", stat.File, stat.Tokens)
+			} else {
+				fmt.Printf("  %s (%d tokens)\n", stat.File, stat.Tokens)
+			}
 		}
 		fmt.Println()
 	}
@@ -148,18 +154,21 @@ func (c *ChatCmd) Run(cmdCtx *Context) error {
 
 	if err != nil {
 		if err == context.Canceled {
-			fmt.Printf("Response interrupted after %d tokens\n", finalTokenCount)
+			if finalTokenCount > 0 {
+				fmt.Printf("Response interrupted after %d tokens\n", finalTokenCount)
+			} else {
+				fmt.Printf("Cancelled before response started\n")
+			}
 		} else {
 			return fmt.Errorf("streaming failed: %w", err)
 		}
 	} else {
-		fmt.Printf("Response complete: %d tokens\n", finalTokenCount)
+		if finalTokenCount > 0 {
+			fmt.Printf("Response complete: %d tokens\n", finalTokenCount)
+		} else {
+			fmt.Printf("No response received\n")
+		}
 	}
 
 	return nil
-}
-
-// countTokensApprox provides rough token count (1 token ≈ 4 chars)
-func countTokensApprox(text string) int {
-	return len(text) / 4
 }

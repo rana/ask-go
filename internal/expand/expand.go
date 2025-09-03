@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-enry/go-enry/v2"
 	"github.com/rana/ask/internal/config"
+	"github.com/rana/ask/internal/filter"
 )
 
 // FileStat represents statistics about an expanded file
@@ -27,7 +28,7 @@ func ExpandReferences(content string, turnNumber int) (string, []FileStat, error
 		cfg = config.Defaults()
 	}
 
-	// Pattern to match [[file]] or [[dir/]] references
+	// Pattern to match [[file]] or [[dir/]] or [[dir/**/]] references
 	pattern := regexp.MustCompile(`\[\[([^\]]+)\]\]`)
 	matches := pattern.FindAllStringSubmatch(content, -1)
 
@@ -40,13 +41,26 @@ func ExpandReferences(content string, turnNumber int) (string, []FileStat, error
 	sectionNumber := 1
 
 	for _, match := range matches {
-		fullMatch := match[0] // [[file]] or [[dir/]]
-		path := match[1]      // file or dir/
+		fullMatch := match[0] // [[file]] or [[dir/]] or [[dir/**/]]
+		path := match[1]      // file or dir/ or dir/**/
+
+		// Check if this is a recursive directory reference (ends with /**/)
+		forceRecursive := false
+		if strings.HasSuffix(path, "/**/") {
+			forceRecursive = true
+			path = strings.TrimSuffix(path, "/**/") + "/" // Normalize to dir/
+		}
 
 		// Check if this is a directory reference (ends with /)
 		if strings.HasSuffix(path, "/") {
 			dirPath := strings.TrimSuffix(path, "/")
-			dirExpanded, dirStats, err := expandDirectory(dirPath, turnNumber, sectionNumber, &cfg.Expand)
+
+			// Determine if we should recurse
+			recursive := cfg.Expand.Recursive || forceRecursive
+
+			dirExpanded, dirStats, err := expandDirectoryWithOptions(
+				dirPath, turnNumber, sectionNumber, &cfg.Expand, recursive, 0,
+			)
 			if err != nil {
 				return "", nil, fmt.Errorf("failed to expand directory '%s': %w", dirPath, err)
 			}
@@ -75,7 +89,7 @@ func ExpandReferences(content string, turnNumber int) (string, []FileStat, error
 	return expanded, stats, nil
 }
 
-// expandFile expands a single file reference
+// Update expandFile function to apply filtering:
 func expandFile(fileName string, turnNumber, sectionNumber int) (string, FileStat, error) {
 	// Read the file
 	fileContent, err := os.ReadFile(fileName)
@@ -92,21 +106,40 @@ func expandFile(fileName string, turnNumber, sectionNumber int) (string, FileSta
 		return "", FileStat{}, nil
 	}
 
+	// Apply filtering
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.Defaults()
+	}
+	filteredContent := filter.FilterContent(string(fileContent), fileName, &cfg.Filter)
+
 	// Get language hint using go-enry
 	langHint := getLanguageHint(fileName)
 
 	section := fmt.Sprintf("## [%d.%d] %s\n```%s\n%s\n```",
-		turnNumber, sectionNumber, fileName, langHint, string(fileContent))
+		turnNumber, sectionNumber, fileName, langHint, filteredContent)
 
-	// Track stats
-	tokens := len(fileContent) / 4 // Rough approximation
+	// Track stats - use filtered content for token count
+	tokens := len(filteredContent) / 4 // Rough approximation
 	stat := FileStat{File: fileName, Tokens: tokens}
 
 	return section, stat, nil
 }
 
-// expandDirectory expands all files in a directory
-func expandDirectory(dirPath string, turnNumber, startSection int, expandCfg *config.Expand) (string, []FileStat, error) {
+// expandDirectoryWithOptions expands all files in a directory with explicit recursion control
+func expandDirectoryWithOptions(
+	dirPath string,
+	turnNumber, startSection int,
+	expandCfg *config.Expand,
+	recursive bool,
+	depth int,
+) (string, []FileStat, error) {
+	// Check max depth
+	if depth >= expandCfg.MaxDepth {
+		// Silently stop at max depth
+		return "", nil, nil
+	}
+
 	// Check if directory exists
 	info, err := os.Stat(dirPath)
 	if err != nil {
@@ -125,33 +158,41 @@ func expandDirectory(dirPath string, turnNumber, startSection int, expandCfg *co
 		return "", nil, fmt.Errorf("failed to read directory '%s': %w", dirPath, err)
 	}
 
-	// Filter and sort files
+	// Separate files and directories
 	var files []string
+	var subdirs []string
+
 	for _, entry := range entries {
+		name := entry.Name()
+		fullPath := filepath.Join(dirPath, name)
+
 		if entry.IsDir() {
-			continue // Skip subdirectories in non-recursive mode
-		}
-
-		fileName := entry.Name()
-		filePath := filepath.Join(dirPath, fileName)
-
-		// Check if file should be included
-		if shouldIncludeFile(fileName, filePath, expandCfg) {
-			files = append(files, filePath)
+			// Check if directory should be excluded
+			if !isExcludedDirectory(name, expandCfg) {
+				subdirs = append(subdirs, fullPath)
+			}
+		} else {
+			// Check if file should be included
+			if shouldIncludeFile(name, fullPath, expandCfg) {
+				files = append(files, fullPath)
+			}
 		}
 	}
 
-	// Sort files for consistent output
+	// Sort for consistent output
 	sort.Strings(files)
+	sort.Strings(subdirs)
 
-	if len(files) == 0 {
-		return "", nil, fmt.Errorf("no matching files in directory '%s'", dirPath)
-	}
-
-	// Expand each file
+	// Expand files first
 	var sections []string
 	var stats []FileStat
 	sectionNumber := startSection
+
+	// Load config for filtering
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.Defaults()
+	}
 
 	for _, filePath := range files {
 		fileContent, err := os.ReadFile(filePath)
@@ -165,22 +206,60 @@ func expandDirectory(dirPath string, turnNumber, startSection int, expandCfg *co
 			continue
 		}
 
+		// Apply filtering
+		filteredContent := filter.FilterContent(string(fileContent), filePath, &cfg.Filter)
+
 		// Get language hint using go-enry
 		langHint := getLanguageHint(filePath)
 
 		section := fmt.Sprintf("## [%d.%d] %s\n```%s\n%s\n```",
-			turnNumber, sectionNumber, filePath, langHint, string(fileContent))
+			turnNumber, sectionNumber, filePath, langHint, filteredContent)
 
 		sections = append(sections, section)
 
-		// Track stats
-		tokens := len(fileContent) / 4
+		// Track stats - use filtered content
+		tokens := len(filteredContent) / 4
 		stats = append(stats, FileStat{File: filePath, Tokens: tokens})
 
 		sectionNumber++
 	}
 
+	// Recursively expand subdirectories if enabled
+	if recursive {
+		for _, subdir := range subdirs {
+			subExpanded, subStats, err := expandDirectoryWithOptions(
+				subdir, turnNumber, sectionNumber, expandCfg, recursive, depth+1,
+			)
+			if err != nil {
+				// Log warning but continue
+				fmt.Printf("Warning: skipping '%s': %v\n", subdir, err)
+				continue
+			}
+
+			if subExpanded != "" {
+				sections = append(sections, subExpanded)
+				stats = append(stats, subStats...)
+				sectionNumber += len(subStats)
+			}
+		}
+	}
+
+	if len(sections) == 0 && depth == 0 {
+		// Only error if no files found at root level
+		return "", nil, fmt.Errorf("no matching files in directory '%s'", dirPath)
+	}
+
 	return strings.Join(sections, "\n\n"), stats, nil
+}
+
+// isExcludedDirectory checks if a directory should be excluded
+func isExcludedDirectory(dirName string, expandCfg *config.Expand) bool {
+	for _, excludeDir := range expandCfg.Exclude.Directories {
+		if dirName == excludeDir {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldIncludeFile checks if a file should be included based on config
