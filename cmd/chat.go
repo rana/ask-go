@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rana/ask/internal/bedrock"
 	"github.com/rana/ask/internal/config"
@@ -91,7 +92,12 @@ func (c *ChatCmd) Run(cmdCtx *Context) error {
 	if totalExpansions > 0 {
 		fmt.Printf("Expanding %d file references...\n", totalExpansions)
 		for _, stat := range allStats {
-			fmt.Printf("  %s (%d tokens)\n", stat.File, stat.Tokens)
+			// Show directory indicator for multiple files from same dir
+			if strings.Contains(stat.File, "/") {
+				fmt.Printf("  %s (%d tokens)\n", stat.File, stat.Tokens)
+			} else {
+				fmt.Printf("  %s (%d tokens)\n", stat.File, stat.Tokens)
+			}
 		}
 		fmt.Println()
 	}
@@ -157,9 +163,4 @@ func (c *ChatCmd) Run(cmdCtx *Context) error {
 	}
 
 	return nil
-}
-
-// countTokensApprox provides rough token count (1 token ≈ 4 chars)
-func countTokensApprox(text string) int {
-	return len(text) / 4
 }

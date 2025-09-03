@@ -18,6 +18,7 @@ type CfgCmd struct {
 	Thinking       CfgThinkingCmd       `cmd:"" help:"Enable/disable thinking mode"`
 	ThinkingBudget CfgThinkingBudgetCmd `cmd:"" help:"Set thinking budget (0.0-1.0)"`
 	Context        CfgContextCmd        `cmd:"" help:"Set context window size"`
+	Expand         CfgExpandCmd         `cmd:"" help:"Configure directory expansion"`
 }
 
 // Run shows current configuration
@@ -260,12 +261,13 @@ func (c *CfgContextCmd) Run(cmdCtx *Context) error {
 		fmt.Printf("Context window preference: %s\n", currentSize)
 
 		// Show model-specific reality
-		if cfg.Model == "sonnet" || cfg.Model == "sonnet-4" {
+		switch cfg.Model {
+		case "sonnet", "sonnet-4":
 			fmt.Println("\nSonnet 4 status:")
 			fmt.Println("  - Uses AWS system profiles only")
 			fmt.Println("  - 1M context requires AWS to provide it")
 			fmt.Println("  - Cannot create custom profiles")
-		} else if cfg.Model == "opus" {
+		case "opus":
 			fmt.Println("\nOpus status:")
 			fmt.Println("  - Supports custom profiles")
 			fmt.Println("  - Standard context (200k tokens)")
@@ -291,4 +293,82 @@ func (c *CfgContextCmd) Run(cmdCtx *Context) error {
 	}
 
 	return cfg.Save()
+}
+
+// CfgExpandCmd manages expansion settings
+type CfgExpandCmd struct {
+	Recursive CfgExpandRecursiveCmd `cmd:"" help:"Set recursive expansion default"`
+	MaxDepth  CfgExpandMaxDepthCmd  `cmd:"" help:"Set maximum recursion depth"`
+}
+
+// Run shows current expansion settings
+func (c *CfgExpandCmd) Run(cmdCtx *Context) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	fmt.Printf("Directory expansion settings:\n")
+	fmt.Printf("  Recursive: %v\n", cfg.Expand.Recursive)
+	fmt.Printf("  Max Depth: %d\n", cfg.Expand.MaxDepth)
+	fmt.Printf("\nNote: Use [[dir/**/]] to force recursive expansion\n")
+
+	return nil
+}
+
+// CfgExpandRecursiveCmd sets recursive expansion default
+type CfgExpandRecursiveCmd struct {
+	Enable string `arg:"" help:"Enable recursive: on/off"`
+}
+
+func (c *CfgExpandRecursiveCmd) Run(cmdCtx *Context) error {
+	enable := false
+	switch strings.ToLower(c.Enable) {
+	case "on", "true", "yes", "1":
+		enable = true
+	case "off", "false", "no", "0":
+		enable = false
+	default:
+		return fmt.Errorf("invalid value: use on/off")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	cfg.Expand.Recursive = enable
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Recursive expansion default: %v\n", enable)
+	if !enable {
+		fmt.Println("Tip: Use [[dir/**/]] to force recursive for specific directories")
+	}
+	return nil
+}
+
+// CfgExpandMaxDepthCmd sets max recursion depth
+type CfgExpandMaxDepthCmd struct {
+	Depth int `arg:"" help:"Maximum depth (1-10)"`
+}
+
+func (c *CfgExpandMaxDepthCmd) Run(cmdCtx *Context) error {
+	if c.Depth < 1 || c.Depth > 10 {
+		return fmt.Errorf("depth must be between 1 and 10")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	cfg.Expand.MaxDepth = c.Depth
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Max recursion depth set to: %d\n", c.Depth)
+	return nil
 }
