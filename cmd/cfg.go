@@ -19,6 +19,7 @@ type CfgCmd struct {
 	ThinkingBudget CfgThinkingBudgetCmd `cmd:"" help:"Set thinking budget (0.0-1.0)"`
 	Context        CfgContextCmd        `cmd:"" help:"Set context window size"`
 	Expand         CfgExpandCmd         `cmd:"" help:"Configure directory expansion"`
+	Filter         CfgFilterCmd         `cmd:"" help:"Configure content filtering"`
 }
 
 // Run shows current configuration
@@ -370,5 +371,120 @@ func (c *CfgExpandMaxDepthCmd) Run(cmdCtx *Context) error {
 	}
 
 	fmt.Printf("Max recursion depth set to: %d\n", c.Depth)
+	return nil
+}
+
+// CfgFilterCmd manages filter settings
+type CfgFilterCmd struct {
+	Enable        CfgFilterEnableCmd   `cmd:"" help:"Enable/disable filtering"`
+	Headers       CfgFilterHeadersCmd  `cmd:"" help:"Enable/disable header stripping"`
+	StripComments CfgFilterCommentsCmd `cmd:"" help:"Enable/disable comment stripping"`
+}
+
+// Run shows current filter settings
+func (c *CfgFilterCmd) Run(cmdCtx *Context) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	fmt.Printf("Content filtering settings:\n")
+	fmt.Printf("  Enabled:          %v\n", cfg.Filter.Enabled)
+	fmt.Printf("  Strip Headers:    %v\n", cfg.Filter.StripHeaders)
+	fmt.Printf("  Strip All Comments: %v\n", cfg.Filter.StripAllComments)
+	fmt.Printf("\nGo-specific settings:\n")
+	fmt.Printf("  Header Lines:     %d\n", cfg.Filter.Go.HeaderLines)
+	fmt.Printf("  Header Keywords:  %v\n", cfg.Filter.Go.HeaderKeywords)
+
+	return nil
+}
+
+// CfgFilterEnableCmd enables/disables filtering
+type CfgFilterEnableCmd struct {
+	Enable string `arg:"" help:"Enable filtering: on/off"`
+}
+
+func (c *CfgFilterEnableCmd) Run(cmdCtx *Context) error {
+	enable := false
+	switch strings.ToLower(c.Enable) {
+	case "on", "true", "yes", "1":
+		enable = true
+	case "off", "false", "no", "0":
+		enable = false
+	default:
+		return fmt.Errorf("invalid value: use on/off")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	cfg.Filter.Enabled = enable
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Content filtering: %v\n", enable)
+	return nil
+}
+
+// CfgFilterHeadersCmd enables/disables header stripping
+type CfgFilterHeadersCmd struct {
+	Enable string `arg:"" help:"Strip headers: on/off"`
+}
+
+func (c *CfgFilterHeadersCmd) Run(cmdCtx *Context) error {
+	enable := false
+	switch strings.ToLower(c.Enable) {
+	case "on", "true", "yes", "1":
+		enable = true
+	case "off", "false", "no", "0":
+		enable = false
+	default:
+		return fmt.Errorf("invalid value: use on/off")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	cfg.Filter.StripHeaders = enable
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Header stripping: %v\n", enable)
+	return nil
+}
+
+// CfgFilterCommentsCmd enables/disables comment stripping
+type CfgFilterCommentsCmd struct {
+	Enable string `arg:"" help:"Strip all comments: on/off"`
+}
+
+func (c *CfgFilterCommentsCmd) Run(cmdCtx *Context) error {
+	enable := false
+	switch strings.ToLower(c.Enable) {
+	case "on", "true", "yes", "1":
+		enable = true
+	case "off", "false", "no", "0":
+		enable = false
+	default:
+		return fmt.Errorf("invalid value: use on/off")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	cfg.Filter.StripAllComments = enable
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Strip all comments: %v\n", enable)
 	return nil
 }

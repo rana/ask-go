@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-enry/go-enry/v2"
 	"github.com/rana/ask/internal/config"
+	"github.com/rana/ask/internal/filter"
 )
 
 // FileStat represents statistics about an expanded file
@@ -88,7 +89,7 @@ func ExpandReferences(content string, turnNumber int) (string, []FileStat, error
 	return expanded, stats, nil
 }
 
-// expandFile expands a single file reference
+// Update expandFile function to apply filtering:
 func expandFile(fileName string, turnNumber, sectionNumber int) (string, FileStat, error) {
 	// Read the file
 	fileContent, err := os.ReadFile(fileName)
@@ -105,14 +106,21 @@ func expandFile(fileName string, turnNumber, sectionNumber int) (string, FileSta
 		return "", FileStat{}, nil
 	}
 
+	// Apply filtering
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.Defaults()
+	}
+	filteredContent := filter.FilterContent(string(fileContent), fileName, &cfg.Filter)
+
 	// Get language hint using go-enry
 	langHint := getLanguageHint(fileName)
 
 	section := fmt.Sprintf("## [%d.%d] %s\n```%s\n%s\n```",
-		turnNumber, sectionNumber, fileName, langHint, string(fileContent))
+		turnNumber, sectionNumber, fileName, langHint, filteredContent)
 
-	// Track stats
-	tokens := len(fileContent) / 4 // Rough approximation
+	// Track stats - use filtered content for token count
+	tokens := len(filteredContent) / 4 // Rough approximation
 	stat := FileStat{File: fileName, Tokens: tokens}
 
 	return section, stat, nil
@@ -180,6 +188,12 @@ func expandDirectoryWithOptions(
 	var stats []FileStat
 	sectionNumber := startSection
 
+	// Load config for filtering
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.Defaults()
+	}
+
 	for _, filePath := range files {
 		fileContent, err := os.ReadFile(filePath)
 		if err != nil {
@@ -192,16 +206,19 @@ func expandDirectoryWithOptions(
 			continue
 		}
 
+		// Apply filtering
+		filteredContent := filter.FilterContent(string(fileContent), filePath, &cfg.Filter)
+
 		// Get language hint using go-enry
 		langHint := getLanguageHint(filePath)
 
 		section := fmt.Sprintf("## [%d.%d] %s\n```%s\n%s\n```",
-			turnNumber, sectionNumber, filePath, langHint, string(fileContent))
+			turnNumber, sectionNumber, filePath, langHint, filteredContent)
 
 		sections = append(sections, section)
 
-		// Track stats
-		tokens := len(fileContent) / 4
+		// Track stats - use filtered content
+		tokens := len(filteredContent) / 4
 		stats = append(stats, FileStat{File: filePath, Tokens: tokens})
 
 		sectionNumber++
@@ -233,11 +250,6 @@ func expandDirectoryWithOptions(
 	}
 
 	return strings.Join(sections, "\n\n"), stats, nil
-}
-
-// expandDirectory is kept for backwards compatibility
-func expandDirectory(dirPath string, turnNumber, startSection int, expandCfg *config.Expand) (string, []FileStat, error) {
-	return expandDirectoryWithOptions(dirPath, turnNumber, startSection, expandCfg, expandCfg.Recursive, 0)
 }
 
 // isExcludedDirectory checks if a directory should be excluded
