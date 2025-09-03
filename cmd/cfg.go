@@ -10,6 +10,7 @@ import (
 
 // CfgCmd manages configuration
 type CfgCmd struct {
+	Show           CfgShowCmd           `cmd:"" help:"Show current configuration"`
 	Models         CfgModelsCmd         `cmd:"" help:"List available models"`
 	Model          CfgModelCmd          `cmd:"" help:"Set model"`
 	Temperature    CfgTemperatureCmd    `cmd:"" help:"Set temperature (0.0-1.0)"`
@@ -22,8 +23,10 @@ type CfgCmd struct {
 	Filter         CfgFilterCmd         `cmd:"" help:"Configure content filtering"`
 }
 
-// Run shows current configuration
-func (c *CfgCmd) Run(cmdCtx *Context) error {
+// CfgShowCmd explicitly shows configuration
+type CfgShowCmd struct{}
+
+func (c *CfgShowCmd) Run(cmdCtx *Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -45,6 +48,18 @@ func (c *CfgCmd) Run(cmdCtx *Context) error {
 		fmt.Printf("Thinking Budget: %.0f%% (%d tokens)\n",
 			cfg.Thinking.Budget*100,
 			cfg.GetThinkingTokens())
+	}
+	fmt.Printf("Context:         %s\n", cfg.Context)
+
+	fmt.Printf("\nDirectory Expansion:\n")
+	fmt.Printf("  Recursive:     %v\n", cfg.Expand.Recursive)
+	fmt.Printf("  Max Depth:     %d\n", cfg.Expand.MaxDepth)
+
+	fmt.Printf("\nContent Filtering:\n")
+	fmt.Printf("  Enabled:       %v\n", cfg.Filter.Enabled)
+	if cfg.Filter.Enabled {
+		fmt.Printf("  Strip Headers: %v\n", cfg.Filter.StripHeaders)
+		fmt.Printf("  Strip Comments: %v\n", cfg.Filter.StripAllComments)
 	}
 
 	return nil

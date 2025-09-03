@@ -154,12 +154,20 @@ func (c *ChatCmd) Run(cmdCtx *Context) error {
 
 	if err != nil {
 		if err == context.Canceled {
-			fmt.Printf("Response interrupted after %d tokens\n", finalTokenCount)
+			if finalTokenCount > 0 {
+				fmt.Printf("Response interrupted after %d tokens\n", finalTokenCount)
+			} else {
+				fmt.Printf("Cancelled before response started\n")
+			}
 		} else {
 			return fmt.Errorf("streaming failed: %w", err)
 		}
 	} else {
-		fmt.Printf("Response complete: %d tokens\n", finalTokenCount)
+		if finalTokenCount > 0 {
+			fmt.Printf("Response complete: %d tokens\n", finalTokenCount)
+		} else {
+			fmt.Printf("No response received\n")
+		}
 	}
 
 	return nil
