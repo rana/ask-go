@@ -1,10 +1,10 @@
 # Ask
 
-A thought preservation and amplification system using AWS Bedrock Claude and markdown files.
+AI conversations through Markdown using AWS Bedrock Claude.
 
 ## Philosophy
 
-Ask treats markdown files as a source of truth. The tool orchestrates conversations but the markdown session is the primary artifact. Your thoughts, enriched with AI comprehension, become preserved knowledge.
+Ask treats markdown files as a source of truth. `ask` a CLI tool orchestrates conversations but the markdown session is the primary artifact. Your thoughts, enriched with AI comprehension, become preserved knowledge.
 
 ## Installation
 

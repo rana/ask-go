@@ -91,7 +91,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          draft: true  # Create as draft for manual review
+          draft: false  # Create as draft for manual review
           generate_release_notes: true  # Auto-generate from commits
           files: |
             ask-*.tar.xz
