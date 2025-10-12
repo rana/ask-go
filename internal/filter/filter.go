@@ -1,131 +1,121 @@
 package filter
 
 import (
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/rana/ask/internal/config"
 )
 
-// FilterContent applies configured filters to file content
 func FilterContent(content string, filePath string, filterCfg *config.Filter) string {
 	if !filterCfg.Enabled {
 		return content
 	}
 
-	// Determine file type
-	ext := strings.ToLower(filepath.Ext(filePath))
-
-	switch ext {
-	case ".go":
-		return filterGoContent(content, filterCfg)
-	default:
-		// No filtering for other file types yet
-		return content
-	}
-}
-
-// filterGoContent applies Go-specific filters
-func filterGoContent(content string, filterCfg *config.Filter) string {
 	if filterCfg.StripHeaders {
-		content = stripGoHeader(content, filterCfg.Go)
+		content = stripHeader(content, filterCfg.Header)
 	}
 
 	if filterCfg.StripAllComments {
-		content = stripGoComments(content)
+		content = stripAllComments(content)
 	}
 
 	return content
 }
 
-// stripGoHeader removes copyright/license headers from Go files
-func stripGoHeader(content string, goCfg config.GoFilter) string {
+func stripHeader(content string, cfg config.HeaderFilter) string {
+	// Check if content starts with a preserved pattern
+	trimmed := strings.TrimSpace(content)
+	for _, preserve := range cfg.Preserve {
+		if strings.HasPrefix(trimmed, preserve) {
+			return content // Don't touch preserved patterns
+		}
+	}
+
+	// Check if this matches a removable block comment pattern
+	for _, pattern := range cfg.Remove {
+		if strings.HasPrefix(trimmed, pattern.Start) {
+			// Find the end of this block
+			if endIdx := strings.Index(content, pattern.End); endIdx != -1 {
+				// Calculate position after the block comment
+				afterBlock := endIdx + len(pattern.End)
+				if afterBlock >= len(content) {
+					return "" // File was just a header
+				}
+
+				// Get content after the block
+				remaining := content[afterBlock:]
+
+				// Trim leading whitespace and newlines
+				result := strings.TrimLeft(remaining, " \t\n\r")
+
+				// If the result is empty or starts with another header pattern,
+				// recursively strip that too (handles consecutive headers)
+				if result != "" && result != remaining {
+					return stripHeader(result, cfg)
+				}
+
+				return result
+			}
+		}
+	}
+
+	return content
+}
+
+func stripAllComments(content string) string {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 {
-		return content
-	}
-
-	// Look for header in first N lines
-	headerEnd := -1
+	var result []string
 	inBlockComment := false
-	checkLines := goCfg.HeaderLines
-	if checkLines > len(lines) {
-		checkLines = len(lines)
-	}
+	blockEnd := ""
 
-	for i := 0; i < checkLines; i++ {
-		line := lines[i]
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// Track block comments
-		if strings.HasPrefix(trimmed, "/*") {
-			inBlockComment = true
-		}
-
-		// Check if line contains header keywords
-		isHeaderLine := false
-		if inBlockComment || strings.HasPrefix(trimmed, "//") {
-			lineUpper := strings.ToUpper(line)
-			for _, keyword := range goCfg.HeaderKeywords {
-				if strings.Contains(lineUpper, strings.ToUpper(keyword)) {
-					isHeaderLine = true
-					headerEnd = i
-					break
-				}
+		// Handle block comments
+		if !inBlockComment {
+			// Check for block comment starts
+			if strings.HasPrefix(trimmed, "/*") {
+				inBlockComment = true
+				blockEnd = "*/"
+				continue
+			} else if strings.HasPrefix(trimmed, "<!--") {
+				inBlockComment = true
+				blockEnd = "-->"
+				continue
+			} else if strings.HasPrefix(trimmed, `"""`) {
+				inBlockComment = true
+				blockEnd = `"""`
+				continue
+			} else if strings.HasPrefix(trimmed, "'''") {
+				inBlockComment = true
+				blockEnd = "'''"
+				continue
 			}
 		}
 
-		// End of block comment
-		if strings.HasSuffix(trimmed, "*/") {
-			if isHeaderLine || headerEnd >= 0 {
-				headerEnd = i
+		if inBlockComment {
+			if strings.Contains(line, blockEnd) {
+				inBlockComment = false
 			}
-			inBlockComment = false
+			continue
 		}
 
-		// Stop if we hit package declaration or non-comment
-		if !inBlockComment && !strings.HasPrefix(trimmed, "//") && trimmed != "" {
-			if strings.HasPrefix(trimmed, "package ") {
-				break
-			}
-			// If we haven't found header keywords yet, no header to strip
-			if headerEnd == -1 {
-				return content
-			}
-			break
+		// Skip single-line comments
+		if strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "--") {
+			continue
 		}
+
+		// Keep non-comment lines
+		result = append(result, line)
 	}
 
-	// If we found a header, skip past it
-	if headerEnd >= 0 {
-		// Skip past the header and any following blank lines
-		startLine := headerEnd + 1
-		for startLine < len(lines) && strings.TrimSpace(lines[startLine]) == "" {
-			startLine++
-		}
-
-		if startLine < len(lines) {
-			return strings.Join(lines[startLine:], "\n")
-		}
+	// Clean up excessive blank lines
+	cleaned := strings.Join(result, "\n")
+	for strings.Contains(cleaned, "\n\n\n") {
+		cleaned = strings.ReplaceAll(cleaned, "\n\n\n", "\n\n")
 	}
 
-	return content
-}
-
-// stripGoComments removes all comments from Go code
-func stripGoComments(content string) string {
-	// Remove single-line comments
-	singleLineRegex := regexp.MustCompile(`(?m)//.*$`)
-	content = singleLineRegex.ReplaceAllString(content, "")
-
-	// Remove multi-line comments
-	multiLineRegex := regexp.MustCompile(`(?s)/\*.*?\*/`)
-	content = multiLineRegex.ReplaceAllString(content, "")
-
-	// Clean up extra blank lines (more than 2 consecutive)
-	blankLineRegex := regexp.MustCompile(`\n{3,}`)
-	content = blankLineRegex.ReplaceAllString(content, "\n\n")
-
-	return strings.TrimSpace(content)
+	return strings.TrimSpace(cleaned)
 }
