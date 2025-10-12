@@ -9,7 +9,6 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Config represents the Ask configuration
 type Config struct {
 	Version     int                    `toml:"version"`
 	Model       string                 `toml:"model"`
@@ -23,13 +22,11 @@ type Config struct {
 	Bedrock     map[string]interface{} `toml:"bedrock,omitempty"`
 }
 
-// Thinking represents thinking mode configuration
 type Thinking struct {
 	Enabled bool    `toml:"enabled"`
 	Budget  float64 `toml:"budget"`
 }
 
-// Expand represents directory expansion configuration
 type Expand struct {
 	MaxDepth  int         `toml:"max_depth"`
 	Recursive bool        `toml:"recursive"`
@@ -37,37 +34,37 @@ type Expand struct {
 	Exclude   ExcludeSpec `toml:"exclude"`
 }
 
-// IncludeSpec defines what to include in expansion
 type IncludeSpec struct {
 	Extensions []string `toml:"extensions"`
 	Patterns   []string `toml:"patterns"`
 }
 
-// ExcludeSpec defines what to exclude from expansion
 type ExcludeSpec struct {
 	Patterns    []string `toml:"patterns"`
 	Directories []string `toml:"directories"`
 }
 
-// Filter represents content filtering configuration
 type Filter struct {
-	Enabled          bool     `toml:"enabled"`
-	StripHeaders     bool     `toml:"strip_headers"`
-	StripAllComments bool     `toml:"strip_all_comments"`
-	Go               GoFilter `toml:"go"`
+	Enabled          bool         `toml:"enabled"`
+	StripHeaders     bool         `toml:"strip_headers"`
+	StripAllComments bool         `toml:"strip_all_comments"`
+	Header           HeaderFilter `toml:"header"`
 }
 
-// GoFilter represents Go-specific filtering
-type GoFilter struct {
-	HeaderLines    int      `toml:"header_lines"`
-	HeaderKeywords []string `toml:"header_keywords"`
+type HeaderFilter struct {
+	Remove   []HeaderPattern `toml:"remove"`
+	Preserve []string        `toml:"preserve"`
 }
 
-// Defaults returns a config with sensible defaults
+type HeaderPattern struct {
+	Start string `toml:"start"`
+	End   string `toml:"end"`
+}
+
 func Defaults() *Config {
 	return &Config{
 		Version:     1,
-		Model:       "opus", // Will resolve to latest Opus model
+		Model:       "opus",
 		Temperature: 1.0,
 		MaxTokens:   32000,
 		Timeout:     "5m",
@@ -92,11 +89,29 @@ func Defaults() *Config {
 			Enabled:          true,
 			StripHeaders:     true,
 			StripAllComments: false,
-			Go: GoFilter{
-				HeaderLines: 15,
-				HeaderKeywords: []string{
-					"Copyright", "copyright", "LICENSE", "License",
-					"Licensed", "SPDX", "AUTHORS", "NOTICE",
+			Header: HeaderFilter{
+				Remove: []HeaderPattern{
+					{Start: "/*", End: "*/"},
+					{Start: "/**", End: "*/"},
+					{Start: "<!--", End: "-->"},
+					{Start: `"""`, End: `"""`},
+					{Start: "'''", End: "'''"},
+					{Start: "(*", End: "*)"},
+					{Start: "{-", End: "-}"},
+					{Start: "=begin", End: "=end"},
+				},
+				Preserve: []string{
+					"//go:",
+					"// +build",
+					"//nolint",
+					"//lint:",
+					"#!",
+					"///<",
+					"//go:generate",
+					"# -*- coding",
+					"# frozen_string_literal",
+					`"use strict"`,
+					`'use strict'`,
 				},
 			},
 		},
@@ -104,11 +119,10 @@ func Defaults() *Config {
 	}
 }
 
-// Load reads config from ~/.ask/cfg.toml, creating with defaults if needed
 func Load() (*Config, error) {
 	path := ConfigPath()
 
-	// Create with defaults if doesn't exist
+	// Create default config if it doesn't exist
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		cfg := Defaults()
 		if err := cfg.Save(); err != nil {
@@ -123,10 +137,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
 
-	// Track if we need to update the config file
+	// Apply defaults for any missing fields
 	needsUpdate := false
 
-	// Apply defaults for any missing fields
+	// Version migration
 	if cfg.Version == 0 {
 		cfg.Version = 1
 		needsUpdate = true
@@ -151,7 +165,7 @@ func Load() (*Config, error) {
 		cfg.Bedrock = make(map[string]interface{})
 	}
 
-	// Apply defaults for expand if missing
+	// Expand defaults
 	if cfg.Expand.MaxDepth == 0 {
 		cfg.Expand.MaxDepth = 3
 		needsUpdate = true
@@ -172,17 +186,17 @@ func Load() (*Config, error) {
 		needsUpdate = true
 	}
 
-	// Apply defaults for filter if missing
-	if cfg.Filter.Go.HeaderLines == 0 {
+	// Filter defaults - migrate from old format
+	if len(cfg.Filter.Header.Remove) == 0 {
 		defaults := Defaults()
-		cfg.Filter = defaults.Filter
+		cfg.Filter.Header = defaults.Filter.Header
 		needsUpdate = true
 	}
 
-	// Save back if we added defaults
+	// Save if we updated defaults
 	if needsUpdate {
 		if err := cfg.Save(); err != nil {
-			// Non-fatal, just warn
+			// Just warn, don't fail
 			fmt.Fprintf(os.Stderr, "Warning: couldn't update config with new defaults: %v\n", err)
 		}
 	}
@@ -190,7 +204,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes config to ~/.ask/cfg.toml
 func (c *Config) Save() error {
 	dir := filepath.Dir(ConfigPath())
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -213,22 +226,18 @@ func (c *Config) Save() error {
 	return nil
 }
 
-// ConfigPath returns the path to the config file
 func ConfigPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".ask", "cfg.toml")
 }
 
-// CachePath returns the path to the cache directory
 func CachePath() string {
 	return filepath.Join(os.Getenv("HOME"), ".ask", "cache")
 }
 
-// ParseTimeout returns the timeout as a duration
 func (c *Config) ParseTimeout() (time.Duration, error) {
 	return time.ParseDuration(c.Timeout)
 }
 
-// GetThinkingTokens returns the number of tokens to use for thinking
 func (c *Config) GetThinkingTokens() int {
 	if !c.Thinking.Enabled {
 		return 0
@@ -236,7 +245,6 @@ func (c *Config) GetThinkingTokens() int {
 	return int(float64(c.MaxTokens) * c.Thinking.Budget)
 }
 
-// ResolveModel returns the full model ID, resolving shortcuts like "opus"
 func (c *Config) ResolveModel() (string, error) {
 	return SelectModel(c.Model)
 }

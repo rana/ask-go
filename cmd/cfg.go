@@ -404,12 +404,13 @@ func (c *CfgFilterCmd) Run(cmdCtx *Context) error {
 	}
 
 	fmt.Printf("Content filtering settings:\n")
-	fmt.Printf("  Enabled:          %v\n", cfg.Filter.Enabled)
-	fmt.Printf("  Strip Headers:    %v\n", cfg.Filter.StripHeaders)
+	fmt.Printf("  Enabled:            %v\n", cfg.Filter.Enabled)
+	fmt.Printf("  Strip Headers:      %v\n", cfg.Filter.StripHeaders)
 	fmt.Printf("  Strip All Comments: %v\n", cfg.Filter.StripAllComments)
-	fmt.Printf("\nGo-specific settings:\n")
-	fmt.Printf("  Header Lines:     %d\n", cfg.Filter.Go.HeaderLines)
-	fmt.Printf("  Header Keywords:  %v\n", cfg.Filter.Go.HeaderKeywords)
+
+	fmt.Printf("\nHeader Patterns:\n")
+	fmt.Printf("  Remove patterns:    %d defined\n", len(cfg.Filter.Header.Remove))
+	fmt.Printf("  Preserve patterns:  %d defined\n", len(cfg.Filter.Header.Preserve))
 
 	return nil
 }

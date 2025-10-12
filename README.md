@@ -65,7 +65,7 @@ Run `ask` again to continue.
 
 ## Configuration
 
-Requires AWS credentials with access to Bedrock Claude 3 Opus:
+Requires AWS credentials with access to Bedrock Claude:
 
 ```bash
 aws configure
@@ -73,7 +73,7 @@ aws configure
 
 ## Design Principles
 
-- **Markdown files are authoritative** - They are the source of truth
+- **Markdown files are central** - They are the source of truth
 - **The tool disappears** - It should feel like thinking, not like using software
 - **Explicit over magic** - You understand what's happening
 - **Knowledge replaces features** - The tool amplifies what you know
