@@ -83,7 +83,7 @@ func SelectModel(typeOrID string) (string, error) {
 		// Try common mappings
 		switch searchType {
 		case "opus":
-			return "us.anthropic.claude-opus-4-1-20250805-v1:0", nil
+			return "anthropic.claude-opus-4-5-20251101-v1:0", nil
 		case "sonnet":
 			return "us.anthropic.claude-3-5-sonnet-20241022-v2:0", nil
 		case "haiku":

@@ -89,38 +89,31 @@ func streamToClaudeWithRetry(ctx context.Context, turns []session.Turn, callback
 		InferenceConfig: inferenceConfig,
 	}
 
-	// Add additional fields for custom profiles
-	if !capabilities.UseSystemProfile {
-		additionalFields := make(map[string]interface{})
+	// Always try to set advanced features
+	// Let AWS API determine what's supported
+	additionalFields := make(map[string]interface{})
 
-		// Add thinking configuration if enabled and supported
-		if cfg.Thinking.Enabled && capabilities.SupportsThinking {
-			additionalFields["thinking"] = map[string]interface{}{
-				"type":          "enabled",
-				"budget_tokens": cfg.GetThinkingTokens(),
-			}
+	if cfg.Thinking.Enabled && capabilities.SupportsThinking {
+		additionalFields["thinking"] = map[string]interface{}{
+			"type":          "enabled",
+			"budget_tokens": cfg.GetThinkingTokens(),
 		}
+	}
 
-		// Add 1M context beta header for Sonnet 4
-		if cfg.Uses1MContext() && strings.Contains(strings.ToLower(modelID), "sonnet-4") {
-			additionalFields["anthropic-beta"] = "context-1m-2025-08-07"
-		}
+	if cfg.Uses1MContext() && capabilities.Supports1MContext {
+		additionalFields["anthropic-beta"] = "context-1m-2025-08-07"
+	}
 
-		// Add any other Bedrock parameters from config
-		for key, value := range cfg.Bedrock {
-			if key != "thinking" && key != "enable_1m_context" {
-				additionalFields[key] = value
-			}
+	// Apply any bedrock config overrides
+	for key, value := range cfg.Bedrock {
+		if key != "thinking" && key != "enable_1m_context" {
+			additionalFields[key] = value
 		}
+	}
 
-		// Only set AdditionalModelRequestFields if we have fields to add
-		if len(additionalFields) > 0 {
-			docMarshaler := document.NewLazyDocument(additionalFields)
-			input.AdditionalModelRequestFields = docMarshaler
-		}
-	} else if cfg.Thinking.Enabled {
-		// Warn user that thinking won't work with system profiles
-		fmt.Println("Note: Thinking mode is not available with system profiles")
+	if len(additionalFields) > 0 {
+		docMarshaler := document.NewLazyDocument(additionalFields)
+		input.AdditionalModelRequestFields = docMarshaler
 	}
 
 	// Start streaming
