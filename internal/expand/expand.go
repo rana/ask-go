@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/go-enry/go-enry/v2"
 	"github.com/rana/ask/internal/config"
 	"github.com/rana/ask/internal/filter"
 )
@@ -308,74 +307,6 @@ func shouldIncludeFile(fileName string, filePath string, expandCfg *config.Expan
 	}
 
 	return false
-}
-
-// getLanguageHint returns the language hint for syntax highlighting using go-enry
-func getLanguageHint(filePath string) string {
-	// First try to get language by filename (handles Dockerfile, Makefile, etc.)
-	if lang, _ := enry.GetLanguageByFilename(filepath.Base(filePath)); lang != "" {
-		return normalizeLanguageHint(lang)
-	}
-
-	// Fall back to extension-based detection
-	ext := filepath.Ext(filePath)
-	if ext != "" {
-		if lang, _ := enry.GetLanguageByExtension(ext); lang != "" {
-			return normalizeLanguageHint(lang)
-		}
-	}
-
-	// If all else fails, return the extension without the dot
-	if ext != "" {
-		return strings.TrimPrefix(ext, ".")
-	}
-
-	return "text"
-}
-
-// normalizeLanguageHint converts go-enry language names to markdown fence identifiers
-func normalizeLanguageHint(lang string) string {
-	// Normalize to lowercase first
-	normalized := strings.ToLower(lang)
-
-	// Handle specific cases where go-enry names don't match markdown conventions
-	switch normalized {
-	case "miniyaml", "yml":
-		return "yaml"
-	case "shell":
-		return "bash"
-	case "c++":
-		return "cpp"
-	case "c#":
-		return "csharp"
-	case "f#":
-		return "fsharp"
-	case "objective-c":
-		return "objc"
-	case "objective-c++":
-		return "objcpp"
-	case "restructuredtext":
-		return "rst"
-	case "sqlpl", "plsql", "t-sql":
-		return "sql"
-	case "viml":
-		return "vim"
-	case "docker":
-		return "dockerfile"
-	case "markup", "html+erb":
-		return "html"
-	case "golang":
-		return "go"
-	case "rustlang":
-		return "rust"
-	}
-
-	// Remove spaces and problematic characters
-	normalized = strings.ReplaceAll(normalized, " ", "")
-	normalized = strings.ReplaceAll(normalized, "+", "plus")
-	normalized = strings.ReplaceAll(normalized, "#", "sharp")
-
-	return normalized
 }
 
 // isBinary checks if content appears to be binary
