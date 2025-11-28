@@ -88,7 +88,6 @@ Ask will:
 1. Expand your `[[file]]` references into numbered sections
 2. Send to Claude via AWS Bedrock  
 3. Append the AI response as a new turn
-4. Show token counts for awareness
 
 Continue the conversation by adding a new human turn:
 
