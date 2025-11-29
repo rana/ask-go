@@ -85,9 +85,9 @@ func SelectModel(typeOrID string) (string, error) {
 		case "opus":
 			return "anthropic.claude-opus-4-5-20251101-v1:0", nil
 		case "sonnet":
-			return "us.anthropic.claude-3-5-sonnet-20241022-v2:0", nil
+			return "anthropic.claude-sonnet-4-5-20250929-v1:0", nil
 		case "haiku":
-			return "us.anthropic.claude-3-5-haiku-20241022-v1:0", nil
+			return "anthropic.claude-haiku-4-5-20251001-v1:0", nil
 		default:
 			return "", fmt.Errorf("no model found for type '%s'", typeOrID)
 		}
