@@ -1,4 +1,4 @@
-# ask
+# ask-go
 
 AI conversations through Markdown using AWS Bedrock Claude.
 
